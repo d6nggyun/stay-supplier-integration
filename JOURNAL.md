@@ -738,3 +738,34 @@ A와 같은 `SupplierAdapter`를 구현하고 결과 타입(`SupplierCatalog`·`
 ### 검증
 
 MockWebServer로 확인했습니다. 정상 정규화(B77120 `totalPrice` 452,000 → gross 452,000 / avg 150,666 / 재고 min=1 / 조식 true), **HTTP 200 + `resultCode: E503` → `SupplierIntegrationException`(B 핵심)**, 숙소 목록 카탈로그 정규화, 잘못된 형식 → `SupplierIntegrationException`.
+
+## 22. 구현 — #7 숙소 목록 동기화 서비스
+
+두 어댑터의 카탈로그로 매핑을 채우는 동기화를 구현했습니다. 여기서 처음으로 어댑터·Repository를 Spring 빈으로 배선하고 WebClient 설정이 들어왔습니다.
+
+### 만든 것
+
+- `global.config`: `SupplierProperties`(`@ConfigurationProperties`), `SupplierAdapterConfig`(공급사별 WebClient + `X-Api-Key`, 어댑터 A/B 빈 등록)
+- `application`: `MappingUpserter`(`@Transactional` upsert), `CatalogSyncService`(기동·주기·수동)
+- `@EnableScheduling`, `application.yml`의 `supplier` 설정
+
+### 구현 결정
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| WebClient·설정 분리 | base-url·api-key를 `SupplierProperties`로, WebClient 구성을 `config`로 | 코드에서 엔드포인트·키를 분리하고, 어댑터는 호출 로직에만 집중합니다. |
+| upsert 배선 | `MappingUpserter`를 별도 빈으로 두고 `@Transactional` | 네트워크 호출(fetch)은 트랜잭션 밖에서, upsert만 트랜잭션 안에서. 동기화 서비스 내 self-invocation으로 트랜잭션이 안 걸리는 문제를 피합니다. |
+| 재사용 보장 | `findBy` → 있으면 `refreshFrom`(기존 내부 식별자 유지), 없으면 `save` | "같은 공급사 코드는 항상 같은 내부 식별자"를 upsert로 보장합니다. |
+| 실패 격리 | 한 공급사 실패 시 경고 로그 + 나머지 계속, 기존 매핑 유지 | 한 공급사 목록 조회 실패가 전체 동기화를 막지 않게 합니다(P9). |
+| 동기화 시점 | 주기 스케줄러 하나(첫 실행이 기동 적재 겸함) + 수동(`syncAll()`) | `@Scheduled`가 initialDelay 없이 기동 직후 첫 실행되므로, 별도 기동 트리거는 중복이라 두지 않습니다. 수동 트리거의 HTTP 엔드포인트는 web이 붙는 #10에서 노출합니다. |
+
+### 발견·수정
+
+처음엔 기동 동기화(`@EventListener(ApplicationReadyEvent)`)와 주기 동기화(`@Scheduled`)를 따로 뒀습니다. e2e에서 둘이 기동 직후 동시에 같은 매핑을 insert해 유니크 제약 충돌(잡혀서 무해하나 불필요)이 났습니다. `@Scheduled`는 `initialDelay`가 없으면 **첫 실행이 기동 직후**이므로, 별도 기동 동기화가 사실 중복이었습니다. 그래서 **주기 스케줄러 하나로 통합**(첫 실행이 초기 적재를 겸함)하고, 테스트에서 그 첫 실행이 외부를 호출하지 않도록 `supplier.sync.enabled=false` 토글로 껐습니다. e2e 재확인 결과 완료 2건·실패 0건으로 레이스가 사라졌습니다.
+
+또한 테스트 `application.yml`이 메인 것을 **대체**하므로(클래스패스에서 test 리소스 우선) `supplier` 설정을 테스트 쪽에도 자립적으로 둡니다.
+
+### 검증
+
+- 단위: upsert 재사용(같은 코드 재동기화 시 내부 식별자 동일·중복 생성 없음), 실패 격리(A 실패해도 B는 upsert)
+- e2e: Mock(9090) + 앱 기동 → `동기화 완료: SUPPLIER_A stays=2`, `SUPPLIER_B stays=1` 로그로 매핑 적재 확인
