@@ -23,3 +23,17 @@ spring:
   h2:
     console:
       enabled: true
+
+# 공급사 연동 설정. 두 공급사 모두 Mock(포트 9090)을 호출하며, 경로(/a/**, /b/**)로 구분한다.
+supplier:
+  a:
+    base-url: http://localhost:9090
+    api-key: mock-api-key
+  b:
+    base-url: http://localhost:9090
+    api-key: mock-api-key
+  sync:
+    # 숙소 목록은 실시간성이 필요 없어 시간 단위로 충분하다. 기본 1시간.
+    # 주기 스케줄러의 첫 실행이 기동 직후 초기 적재를 겸한다.
+    interval-ms: 3600000
+    enabled: true

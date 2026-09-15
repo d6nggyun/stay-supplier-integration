@@ -11,3 +11,16 @@ spring:
     hibernate:
       ddl-auto: create-drop
     open-in-view: false
+
+# 테스트 application.yml은 메인 것을 대체하므로(클래스패스 우선), supplier 설정도 자립적으로 둔다.
+# enabled=false로 스케줄 동기화가 컨텍스트 로딩 시 외부(Mock)를 호출하지 않게 한다.
+supplier:
+  a:
+    base-url: http://localhost:9090
+    api-key: test-key
+  b:
+    base-url: http://localhost:9090
+    api-key: test-key
+  sync:
+    interval-ms: 3600000
+    enabled: false
