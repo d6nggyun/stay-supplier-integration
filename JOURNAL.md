@@ -709,6 +709,7 @@ MockWebServer로 확인했습니다. 정상 응답 정규화(A-10023 gross 429,0
 - **공통 예외 베이스 `StayException`** — 모든 커스텀 예외가 이를 상속해, 예외 처리를 한 곳(향후 `@RestControllerAdvice`)에서 일괄로 다룰 밑그림을 만듭니다.
 - **전역 관심사는 `global` 아래로** — 예외는 `global.exception`에 두고, 앞으로 WebClient 설정(#8)·전역 예외 핸들러(#10)도 `global`에 모아 루트 패키지를 기능 중심으로 유지합니다.
 - **영속 계층도 역할별로** — `infrastructure.persistence`를 `entity`(JPA 엔티티)와 `repository`(Repository)로 나눕니다. 반면 `domain`은 값 객체 5개로 성격이 하나라 flat을 유지했습니다. 쪼갤 곳과 두는 곳을 성격 기준으로 구분합니다.
+- **엔티티 배치는 레퍼런스로 검증** — JPA 엔티티를 도메인/인프라 중 어디 둘지 헥사고날·DDD 레퍼런스(분리파 vs 실용파)를 대조하고, "도메인은 프레임워크-프리, 매핑 엔티티는 infra" 결정과 근거를 [docs/architecture.md](docs/architecture.md)에 기록했습니다. 우리 경우 매핑이 부기 테이블이라 이중 모델 매핑 오버헤드 없이 도메인 순수성을 얻습니다.
 - 원본 응답 DTO는 서브패키지 접근을 위해 `public`으로 두되, 참조는 어댑터 계층 안으로만 한정합니다.
 
 테스트 green으로 검증했습니다.
