@@ -51,11 +51,11 @@ GET /api/v1/stays/search
 
 | 필드 | 설명 |
 | --- | --- |
-| `stayId` | 내부 숙소 식별자 (공급사 코드가 아님) |
-| `stayName` | 숙소명 |
-| `roomTypeId` | 내부 객실 타입 식별자 |
-| `roomTypeName` | 객실 타입명 |
-| `maxOccupancy` | 객실 1실 기준 최대 수용 인원 |
+| `stayId` | 내부 숙소 식별자 (공급사 코드가 아님, 매핑으로 치환) |
+| `stayName` | 숙소명 (재고·요금 응답에서 취득) |
+| `roomTypeId` | 내부 객실 타입 식별자 (매핑으로 치환) |
+| `roomTypeName` | 객실 타입명 (재고·요금 응답에서 취득) |
+| `maxOccupancy` | 객실 1실 기준 최대 수용 인원 (재고·요금 응답에서 취득) |
 | `availableRoomCount` | 예약 가능 객실 수 (0이면 예약 불가, 제거하지 않고 노출) |
 | `supplier` | 출처 공급사 |
 | `breakfastIncluded` | 조식 포함 여부 |
