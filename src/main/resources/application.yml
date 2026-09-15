@@ -1,1 +1,25 @@
-spring.application.name=stay
+spring:
+  application:
+    name: stay
+
+  # H2 file 모드: clone 후 추가 설치 없이 첫 실행 시 ./data/stay.mv.db 생성.
+  # AUTO_SERVER=TRUE로 앱 실행 중 H2 콘솔 등 다른 연결도 허용한다.
+  datasource:
+    url: jdbc:h2:file:./data/stay;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+  # 개발 편의용 H2 콘솔 (http://localhost:8080/h2-console). 운영 기능 아님.
+  h2:
+    console:
+      enabled: true

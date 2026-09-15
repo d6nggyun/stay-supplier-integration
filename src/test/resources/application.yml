@@ -1,0 +1,13 @@
+spring:
+  # 테스트는 파일 DB를 건드리지 않도록 내장(in-memory) H2로 격리한다.
+  # @DataJpaTest는 기본으로 내장 H2로 대체되지만, @SpringBootTest도 여기서 덮어 파일 생성을 막는다.
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
