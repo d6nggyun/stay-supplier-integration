@@ -713,3 +713,28 @@ MockWebServer로 확인했습니다. 정상 응답 정규화(A-10023 gross 429,0
 - 원본 응답 DTO는 서브패키지 접근을 위해 `public`으로 두되, 참조는 어댑터 계층 안으로만 한정합니다.
 
 테스트 green으로 검증했습니다.
+
+## 21. 구현 — #6 Supplier B Adapter
+
+A와 같은 `SupplierAdapter`를 구현하고 결과 타입(`SupplierCatalog`·`SupplierOffer`)은 공유합니다. B의 특징을 어댑터에서 흡수했습니다.
+
+### 만든 것
+
+- `adapter.b.dto`: `BPropertiesResponse`, `BSearchResponse` (record)
+- `adapter.b.SupplierBAdapter`
+- `SupplierBAdapterTest`
+
+### 구현 결정
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| 실패 판정 | HTTP 200이어도 본문 `resultCode != "0000"`이면 실패로 변환 | B는 장애 시에도 HTTP 200을 줍니다. `flatMap`으로 본문을 확인해 실패를 주입하고, A의 4xx/5xx와 동일하게 `SupplierIntegrationException`으로 통일합니다. (방어적으로 `onStatus`도 유지) |
+| 요금 정규화 | `totalPrice`를 그대로 세금 포함 총액으로 사용 | B는 이미 세금 포함 총액을 주므로 변환이 필요 없습니다. 평균가는 A와 동일하게 `총액 / nights` 내림. |
+| 응답 구조 | `data.items` 한 겹을 벗겨 정규화 | A와 감싸는 구조가 다르지만, 벗겨낸 뒤 결과 타입은 A와 동일합니다. |
+| 생성자 | `@RequiredArgsConstructor` | 컨벤션에 따라 WebClient 주입을 어노테이션으로. |
+
+두 어댑터가 같은 결과 타입으로 정규화하므로, 상위(오케스트레이터 #8)는 A·B를 구분 없이 동일하게 병합할 수 있습니다.
+
+### 검증
+
+MockWebServer로 확인했습니다. 정상 정규화(B77120 `totalPrice` 452,000 → gross 452,000 / avg 150,666 / 재고 min=1 / 조식 true), **HTTP 200 + `resultCode: E503` → `SupplierIntegrationException`(B 핵심)**, 숙소 목록 카탈로그 정규화, 잘못된 형식 → `SupplierIntegrationException`.
