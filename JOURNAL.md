@@ -598,3 +598,41 @@ Day 1과 같은 방식으로, AI를 선택지 생성기이자 검토자로 사�
 ### 검증
 
 `./gradlew bootRun`으로 file 모드 기동을 확인했습니다. `create table` 2개 생성 로그, `Started StayApplication`(에러 없음), `data/stay.mv.db` 생성까지 확인했습니다. 현재 web 스타터가 없어 컨텍스트 기동 후 자동 종료되며, 상주 실행 검증은 검색 Controller가 붙는 #10에서 함께 합니다.
+
+## 17. 구현 — #4 Mock Supplier 모듈
+
+부록 A.3 스펙대로 Supplier A·B를 흉내 내는 Mock을 세웠습니다.
+
+### 만든 것
+
+- 멀티모듈 구성: 루트=앱 유지 + `:mock-supplier` 서브프로젝트. 플러그인 버전은 `settings.gradle`의 `pluginManagement`로 올려 모듈 간 충돌을 피합니다.
+- `mock-supplier` 모듈: Spring Boot(web) 앱, 포트 `9090`
+- `MockSupplierController`: 공급사별 엔드포인트 + 상태 제어 엔드포인트
+
+### 엔드포인트·모드
+
+| 대상 | 엔드포인트 |
+| --- | --- |
+| A 숙소 목록(①) | `GET /a/v1/hotels` |
+| A 재고·요금(②) | `GET /a/v1/availability` |
+| B 숙소 목록(①) | `GET /b/api/properties` |
+| B 재고·요금(②) | `GET /b/api/search` |
+| 상태 전환 | `POST /control/{a\|b}/mode?value=normal\|error\|no-response` |
+
+- 정상: 부록 A.1/A.2 예시 고정 응답
+- 장애: A는 HTTP 503, B는 HTTP 200 + `resultCode: E503` (두 공급사의 실패 표현 차이를 그대로 재현)
+- 무응답: 응답 타임아웃을 넘기는 지연(30초)
+- 숙소 목록(①)에는 장애 모드를 걸지 않습니다(②만 전환) — 카탈로그 동기화 실패 검증을 후순위로 둔 결정과 일치합니다.
+
+### 구현 결정
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| 별도 모듈·포트 | `:mock-supplier`, 포트 9090 | 같은 포트면 자기 자신을 호출해 스레드가 묶이고 실제 연동 문제와 구분이 어려워집니다. |
+| 플러그인 버전 관리 | `settings.gradle` `pluginManagement` | 루트·서브프로젝트가 같은 Spring Boot 플러그인을 버전 충돌 없이 적용하기 위함입니다. |
+| 응답 구현 | 고정 JSON 문자열 상수 | Mock은 연동 흐름 재현이 목적이라, 데이터 정교함보다 단순함을 우선합니다. |
+| 상태 관리 | 공급사별 in-memory + 런타임 제어 엔드포인트 | 하나의 인스턴스로 정상·장애·무응답을 순차로 검증할 수 있습니다. |
+
+### 검증
+
+`java -jar`로 Mock을 띄우고 curl로 확인했습니다. A·B 정상 응답, `POST /control/a/mode?value=error` 후 A가 HTTP 503, `POST /control/b/mode?value=error` 후 B가 HTTP 200 + `resultCode: E503`을 반환하는 것까지 확인했습니다.
