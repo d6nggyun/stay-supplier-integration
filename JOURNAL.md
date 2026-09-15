@@ -541,3 +541,36 @@ Day 1과 같은 방식으로, AI를 선택지 생성기이자 검토자로 사�
 - 요금: 429,000 ÷ 3 = 143,000 / 452,000 ÷ 3 = 150,666(내림) — 부록 샘플과 일치
 
 전체 테스트 통과를 `./gradlew test`로 확인했습니다.
+
+## 15. 구현 — #2 매핑 엔티티와 Repository
+
+영속 계층이라 엄격한 TDD 대신 엔티티·Repository 구현과 `@DataJpaTest`(내장 H2)를 병행했습니다. `build.gradle`에 `spring-boot-starter-data-jpa`와 `com.h2database:h2`를 추가했습니다.
+
+### 만든 것
+
+- `infrastructure.persistence` 패키지: `StayMapping`, `RoomTypeMapping`(엔티티), `StayMappingRepository`, `RoomTypeMappingRepository`
+- 테스트: `StayMappingRepositoryTest`, `RoomTypeMappingRepositoryTest`
+
+### 구현 결정
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| 엔티티는 `record` 아님 | 일반 클래스 + 보호 no-arg 생성자 | JPA는 no-arg 생성자·가변 필드·프록시를 위한 비-final 클래스를 요구합니다. 무엇보다 DB가 부여한 식별자로 정체성이 정해지는 엔티티이지 값 객체가 아닙니다. |
+| 매핑 엔티티 위치 | `domain`이 아닌 `infrastructure`에 배치 | `@Entity` 등 JPA(`jakarta.persistence`) 의존을 가지므로, "도메인은 프레임워크-프리"라는 규칙상 도메인에 둘 수 없습니다. 판단 기준은 애노테이션 자체가 아니라 그것이 나타내는 의존입니다. 또한 매핑은 코드↔식별자 부기 테이블이지 핵심 도메인 개념이 아닙니다(핵심 모델 `StayOffer`·`Price`는 저장하지 않음). |
+| 내부 식별자를 PK로 | 별도 대리 키 없이 `internal_stay_id` / `internal_room_type_id`를 PK로 | 병합(확장 범위)이 없어 매핑 행과 내부 식별자가 1:1입니다. 병합을 구현하면 대리 PK를 분리하고 내부 식별자를 일반 컬럼으로 내립니다. (설계 문서 §4.3·4.4 동기화) |
+| 식별자 발급 | `IDENTITY`(DB 자동 증가) | 예측 가능한 순차 id와 DB 이식성(H2·MySQL 공통)을 우선했습니다. `SEQUENCE`는 배치 삽입의 문을 여는 이점이 있으나, 지금 규모(매핑 수십 건)에선 이득이 측정되지 않고 id 구멍·정합성·MySQL 미지원 리스크만 늘어 도입하지 않았습니다. 대량 쓰기 배치가 필요할 규모가 되면 전환하는 경로를 설계 문서(§4.3)에 남겼습니다. |
+| 엔티티 생성 패턴 | Lombok `@Getter` + `private` 생성자 + 정적 팩토리(`of`), 인자 많으면 빌더 | 게터 보일러플레이트를 줄이고 생성 경로를 팩토리로 통제합니다. `RoomTypeMapping`은 문자열 인자가 연달아 있어(코드 3개) 위치 실수를 막으려 빌더를 씁니다. |
+| `supplier` 저장 | `@Enumerated(STRING)` | 순서 변경에 취약한 ORDINAL 대신 이름으로 저장합니다. |
+| 유니크 제약 | 숙소 `(supplier, supplier_stay_code)`, 객실 `(supplier, supplier_stay_code, supplier_room_type_code)` | 같은 공급사 코드 재조회 시 기존 식별자 재사용의 토대이며, 다른 숙소의 같은 객실 코드 충돌을 막습니다. |
+| 타임스탬프 | `@CreationTimestamp` / `@UpdateTimestamp` | 생성·수정 시각을 Hibernate가 채우게 해 보일러플레이트를 줄입니다. |
+
+### 검증
+
+- 저장 시 내부 식별자 발급, 활성 플래그 true
+- `(supplier, code)` / 3-튜플로 조회
+- 같은 키 중복 저장 시 `DataIntegrityViolationException`
+- 공급사가 다르면 같은 코드라도 별도 내부 식별자 (병합 안 함)
+- 다른 숙소의 같은 객실 코드는 충돌하지 않음
+- `findByActiveTrue()`로 활성 매핑만 조회
+
+"같은 코드 재조회 시 기존 식별자 재사용"의 upsert 로직 자체는 숙소 목록 동기화 서비스(#7)에서 다룹니다. 이번에는 그 토대인 조회 메서드와 유니크 제약까지 확정했습니다.

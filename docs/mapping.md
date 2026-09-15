@@ -36,7 +36,7 @@
 
 ## 3. 내부 식별자 생성
 
-내부 식별자는 DB 시퀀스 기반의 숫자 식별자를 사용합니다.
+내부 식별자는 DB가 자동 생성하는 숫자 식별자(`IDENTITY` 전략)를 사용합니다.
 
 - 숙소 매핑이 새로 생성될 때 내부 숙소 ID를 발급합니다.
 - 객실 타입 매핑이 새로 생성될 때 내부 객실 타입 ID를 발급합니다.
@@ -46,6 +46,14 @@
 
 공급사 코드 문자열을 내부 ID로 그대로 쓰지 않는 이유는, 외부 코드와 내부 식별자를 분리하기 위해서입니다. 결정적 해시도 검토했으나 충돌 처리 코드만 늘고, 공급사 코드를 조합한 문자열은 "공급사 코드가 아닌 자사 식별자"라는 요구와 어긋나 제외했습니다.
 
+내부 식별자는 별도의 대리 키를 두지 않고 테이블의 PK로 둡니다. 현재는 병합(확장 범위)이 없어 매핑 행과 내부 식별자가 1:1이기 때문입니다. 병합을 구현하면 여러 매핑 행이 같은 내부 식별자를 공유해야 하므로, 그때 대리 PK(`id`)를 분리하고 내부 식별자는 일반 컬럼으로 내립니다.
+
+### 식별자 생성 전략과 규모 확장
+
+식별자 생성 전략은 현재 `IDENTITY`(DB 자동 증가)입니다. 저장 대상이 매핑 2개 테이블이고 쓰기가 병목이 아니어서, 예측 가능한 순차 id와 DB 이식성(H2·MySQL 공통)을 우선했습니다.
+
+매핑 쓰기가 대량·고빈도가 되어 병목이 되면 `SEQUENCE` + JDBC 배치 삽입으로 전환하는 확장 경로가 있습니다. `IDENTITY`는 생성 키를 INSERT 시점에 받아 배치 삽입을 막지만, `SEQUENCE`는 id를 미리 받아 여러 INSERT를 묶어 DB 왕복을 줄입니다. 전환 시에는 `hibernate.jdbc.batch_size`·`order_inserts`·`allocationSize`를 함께 맞추고, `allocationSize`를 올릴 때 생기는 id 구멍(gap)과 DB 시퀀스 증가폭 정합성을 검증해야 합니다. 또한 `SEQUENCE`는 MySQL 같은 네이티브 시퀀스 미지원 DB에서는 재검토가 필요합니다. 현재 규모에서는 이 이득이 측정되지 않아 도입하지 않고 설계로만 남깁니다.
+
 두 공급사가 실제로 같은 숙소를 제공하더라도 공통 키가 없으므로 각각 별도의 내부 상품으로 관리합니다. 이름을 이용한 자동 병합은 오병합 위험이 있어 이번 구현에서는 후순위로 두고 확장 범위로 남깁니다. 이 항목에서 필수는 "같은 공급사 상품이 항상 같은 내부 식별자로 돌아오는 것"이지, 서로 다른 공급사의 상품을 같은 식별자로 묶는 것이 아닙니다.
 
 ## 4. 테이블
@@ -53,10 +61,9 @@
 ### `stay_mapping`
 
 ```
-- id
+- internal_stay_id (PK — 내부 숙소 식별자, DB 자동 생성 IDENTITY)
 - supplier
 - supplier_stay_code
-- internal_stay_id
 - stay_name
 - active
 - last_seen_at
@@ -64,21 +71,20 @@
 - updated_at
 ```
 
-유니크 제약:
+제약:
 
 ```
+PRIMARY KEY(internal_stay_id)
 UNIQUE(supplier, supplier_stay_code)
-UNIQUE(internal_stay_id)
 ```
 
 ### `room_type_mapping`
 
 ```
-- id
+- internal_room_type_id (PK — 내부 객실 타입 식별자, DB 자동 생성 IDENTITY)
 - supplier
 - supplier_stay_code
 - supplier_room_type_code
-- internal_room_type_id
 - room_type_name
 - max_occupancy
 - active
@@ -87,11 +93,11 @@ UNIQUE(internal_stay_id)
 - updated_at
 ```
 
-유니크 제약:
+제약:
 
 ```
+PRIMARY KEY(internal_room_type_id)
 UNIQUE(supplier, supplier_stay_code, supplier_room_type_code)
-UNIQUE(internal_room_type_id)
 ```
 
 `stay_name`, `room_type_name`, `max_occupancy`는 정적인 숙소 목록 API에서 얻어 매핑에 함께 보존합니다. 다만 이 값들은 **참고·디버깅용 스냅샷**이며, 검색 응답에 실제로 내려가는 이름·최대 수용 인원의 출처는 매핑이 아니라 검색 시점의 재고·요금 응답입니다. (아래 [의사결정](#의사결정-표시-메타데이터의-출처) 참고)
