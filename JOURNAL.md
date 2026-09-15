@@ -106,3 +106,369 @@ AI는 선택지 생성기로 활용하고, 최종 판단은 직접 내렸습니�
 | P8 Actuator | "Actuator에 두면 운영 조작임이 구분된다" | 거부 | Actuator 사용은 엔드포인트 위치만으로 운영 기능과 일반 기능이 구분되지 않으므로 채택하지 않았습니다. |
 | P13 부분 실패 | 5xx / 206 / 200 + 실패 목록 / 200 + 공급사별 상태 객체 4안 | 수용 (4안 선택) | 공급사별 성공·실패 상태와 검색 결과를 함께 표현할 수 있어 고객 응답과 모니터링에 모두 활용하기 좋다고 판단했습니다. |
 | P14 50개 초과 | "설계만 남기고 구현하지 않음"으로 분류 | 재검토 요청 후 수정 | 원문상 필수 구현 항목은 아니므로 우선 분할 호출 설계를 기록하되, 구현 비용이 낮아 여력이 있으면 구현하기로 했습니다. |
+
+## [Day 2]
+
+### 수행 내용
+
+1. 전체 아키텍처 설계
+2. 표준 숙박 상품 모델 설계
+3. 공급사 코드와 내부 식별자 매핑 설계
+4. Supplier Adapter 구조 설계
+5. 통합 검색 흐름 설계
+6. 연동 실패 처리 설계
+7. API 및 테스트 전략 설계
+
+## 1. 설계 목표
+
+이번 설계의 목표는 서로 다른 외부 공급사의 API를 도메인 계층에서 직접 다루지 않고, 내부 표준 모델로 변환해 하나의 검색 API로 제공하는 것입니다. 고객은 상품이 어느 공급사에서 왔는지와 무관하게 동일한 형태의 검색 결과를 받습니다.
+
+핵심 흐름은 다음과 같습니다.
+
+```
+공급사 숙소 목록 조회
+    ↓
+공급사 코드와 내부 식별자 매핑 저장
+    ↓
+고객 검색 요청 수신
+    ↓
+DB에서 공급사별 숙소 코드 조회
+    ↓
+공급사별 숙소 코드를 50개 단위로 분할
+    ↓
+Supplier A·B 병렬 호출
+    ↓
+공급사 응답을 표준 모델로 변환
+    ↓
+재고·요금 계산 및 결과 병합
+    ↓
+공급사별 처리 상태와 함께 응답
+```
+
+전체 도메인을 고려하되, 이번 구현에서는 검색 흐름이 처음부터 끝까지 동작하는 것을 최우선으로 둡니다. 인증·인가, 결제, 프론트엔드, 실제 외부 API 연동, 지역 검색, 정렬·페이징은 이번 구현 범위에서 제외합니다.
+
+## 2. 전체 아키텍처
+
+애플리케이션은 다음 계층으로 나눕니다.
+
+```
+Controller
+    ↓
+Search Application Service
+    ↓
+Supplier Orchestrator
+    ├── Supplier A Adapter
+    └── Supplier B Adapter
+    ↓
+Normalizer
+    ↓
+Standard Stay Offer
+
+Catalog Sync Service
+    ↓
+Supplier Adapter
+    ↓
+Mapping Repository
+    ↓
+Relational Database
+```
+
+- **Controller**: HTTP 요청과 응답만 담당합니다. 공급사별 DTO나 공급사 코드를 직접 다루지 않고, 고객 검색 조건을 내부 `SearchCriteria` 객체로 변환해 애플리케이션 서비스에 전달합니다.
+- **Application Service**: 고객의 검색 요청을 하나의 유스케이스로 조정합니다. 검색 조건 검증, DB 매핑 조회, 공급사별 코드 그룹화, 어댑터 호출, 결과 병합, 공급사별 처리 상태 생성을 담당합니다.
+- **Supplier Adapter**: 각 공급사의 API 형식과 통신 방식을 캡슐화합니다. 요청 파라미터, 응답 DTO, 실패 표현 방식은 어댑터 내부에서만 알고 있어야 합니다.
+- **Domain**: 공급사 API의 필드명과 무관한 내부 표준 모델을 관리합니다. 공급사별 식별자는 내부 식별자로 치환되어 처리되며, 최종 응답에는 내부 식별자만 사용합니다.
+- **Persistence**: 숙소와 객실 타입의 공급사 코드 및 내부 식별자 매핑만 저장합니다. 재고와 요금은 검색 시점의 외부 응답이 원본이므로 저장하지 않습니다.
+
+## 3. 표준 숙박 상품 모델
+
+### 3.1 검색 조건
+
+```
+SearchCriteria
+- checkIn
+- checkOut
+- adults
+- children
+```
+
+날짜 경계는 체크아웃일을 숙박일에 포함하지 않습니다. 예를 들어 `2026-09-01`부터 `2026-09-04`까지는 3박입니다.
+
+```
+long nights = ChronoUnit.DAYS.between(checkIn, checkOut);
+```
+
+검색 조건은 `checkIn < checkOut`, `adults > 0`, `children >= 0`을 검증하며 인원 값은 음수가 될 수 없습니다.
+
+### 3.2 표준 검색 결과
+
+내부 도메인에서는 검색 결과를 `StayOffer`로 표현합니다.
+
+```
+StayOffer
+- internalStayId
+- stayName
+- internalRoomTypeId
+- roomTypeName
+- maxOccupancy
+- availableRoomCount
+- supplier
+- breakfastIncluded
+- price
+- dailyAvailability
+```
+
+`dailyAvailability`는 날짜별 재고를 제공하는 공급사의 경우 내부 모델에 보존하되, 검색 목록 응답에서는 공급사 간 응답 구조를 동일하게 유지하기 위해 직접 노출하지 않습니다.
+
+### 3.3 요금 모델
+
+고객에게 제공하는 요금 기준은 세금 포함 총액입니다.
+
+```
+Price
+- currency
+- grossTotalAmount
+- averageNightlyAmount
+```
+
+Supplier A는 날짜별 세전 요금과 세금이 따로 제공되므로 합산합니다.
+
+```
+grossTotalAmount = Σ(nightlyRate + taxAmount)
+```
+
+Supplier B는 세금이 포함된 숙박 전체 총액을 제공하므로 그대로 사용합니다.
+
+```
+grossTotalAmount = totalPrice
+```
+
+1박 평균가는 표시용 파생 값으로 계산하며, 나누어떨어지지 않으면 내림합니다.
+
+```
+averageNightlyAmount = grossTotalAmount / nights
+```
+
+총액이 원본 값이고 평균가는 표시용 값이므로, 평균가에 숙박일수를 곱한 값이 총액과 다를 수 있음을 허용합니다. 통화는 환산하지 않고 공급사가 제공한 ISO 4217 코드를 그대로 사용합니다.
+
+### 3.4 재고 모델
+
+재고는 날짜별 잔여 객실 수를 기반으로 계산합니다.
+
+```
+availableRoomCount = min(각 숙박일의 remainingRooms)
+```
+
+연박 전체를 예약할 수 있어야 하므로 하루라도 재고가 0이면 예약 가능 객실 수는 0입니다. 예약 불가 상품은 검색 응답에서 제거하지 않고 `availableRoomCount: 0`으로 노출해, 재고 판정 결과를 응답으로 확인할 수 있게 합니다.
+
+### 3.5 조식 정보
+
+조식 포함 여부는 요금에 흡수하지 않고 별도 필드로 제공합니다. 같은 객실 타입이라도 공급사에 따라 조식 포함 여부가 다를 수 있어, 이를 제거하면 가격 비교의 전제가 달라지기 때문입니다.
+
+## 4. 공급사 코드와 내부 식별자 매핑
+
+### 4.1 숙소 매핑
+
+숙소 매핑의 논리적 키는 `(supplier, supplierStayCode)`입니다. 같은 공급사 코드가 다시 조회되면 기존 내부 숙소 식별자를 재사용합니다.
+
+### 4.2 객실 타입 매핑
+
+객실 타입 코드는 숙소 내부에서만 유일하므로, 매핑 키는 `(supplier, supplierStayCode, supplierRoomTypeCode)` 세 값으로 구성합니다. 객실 타입 코드만 저장하면 서로 다른 숙소에서 같은 객실 코드가 사용될 때 충돌할 수 있습니다.
+
+### 4.3 내부 식별자 생성
+
+내부 식별자는 DB 시퀀스 기반의 숫자 식별자를 사용합니다. 숙소·객실 타입 매핑이 새로 생성될 때 내부 ID를 발급하고, 기존 공급사 코드가 존재하면 기존 ID를 재사용합니다. `(supplier, supplierCode)`에 유니크 제약을 두고 upsert로 저장합니다.
+
+공급사 코드 문자열을 내부 ID로 그대로 쓰지 않는 이유는 외부 코드와 내부 식별자를 분리하기 위해서입니다. Supplier A와 B가 실제로 같은 숙소를 제공하더라도 공통 키가 없으므로 각각 별도의 내부 상품으로 관리합니다. 이름을 이용한 자동 병합은 오병합 위험이 있어 이번 구현에서는 후순위로 두고 확장 범위로 남깁니다.
+
+### 4.4 예상 테이블
+
+`stay_mapping`
+
+```
+- id
+- supplier
+- supplier_stay_code
+- internal_stay_id
+- stay_name
+- active
+- last_seen_at
+- created_at
+- updated_at
+
+UNIQUE(supplier, supplier_stay_code)
+UNIQUE(internal_stay_id)
+```
+
+`room_type_mapping`
+
+```
+- id
+- supplier
+- supplier_stay_code
+- supplier_room_type_code
+- internal_room_type_id
+- room_type_name
+- max_occupancy
+- active
+- last_seen_at
+- created_at
+- updated_at
+
+UNIQUE(supplier, supplier_stay_code, supplier_room_type_code)
+UNIQUE(internal_room_type_id)
+```
+
+요금과 재고는 검색 시점마다 달라지는 동적 데이터이므로 저장하지 않습니다.
+
+### 4.5 숙소 목록 동기화
+
+숙소 목록은 비교적 정적이고 재고·요금은 매번 달라지므로 같은 주기로 처리하지 않습니다. 동기화는 (1) 애플리케이션 기동 시 1회, (2) 설정된 주기에 따른 자동 동기화, (3) 즉시 반영이 필요한 경우의 수동 트리거로 둡니다.
+
+동기화 중 한 공급사의 API가 실패하더라도 전체 애플리케이션을 종료하지 않습니다. 기존 매핑이 있으면 기존 매핑으로 서비스하고, 없으면 해당 공급사만 검색 대상에서 제외하며, 실패는 경고 로그로 기록하고 다음 주기 동기화에서 복구를 시도합니다.
+
+## 5. Supplier Adapter 설계
+
+공급사별 어댑터는 동일한 내부 인터페이스를 구현합니다.
+
+```java
+public interface SupplierAdapter {
+    SupplierType supplier();
+    Mono<SupplierCatalog> fetchCatalog();
+    Mono<SupplierSearchResult> search(SearchCriteria criteria, List<String> supplierStayCodes);
+}
+```
+
+### 5.1 어댑터 내부 책임
+
+각 어댑터는 요청 URL 생성, 인증 헤더 설정, 요청 DTO 생성, WebClient 호출, 응답 역직렬화, HTTP 상태 확인, 실패 코드 확인, 표준 모델 변환을 담당합니다. 도메인 계층은 공급사가 어떤 필드명을 쓰는지, HTTP 200 상태에서 실패를 표현하는지, 요금이 날짜별인지 총액인지 알지 못해야 합니다.
+
+### 5.2 Supplier B 실패 처리
+
+Supplier B는 장애가 발생해도 HTTP 200을 반환할 수 있으므로, 응답 본문의 `resultCode`를 함께 확인합니다.
+
+```
+resultCode == "0000" → 정상 응답
+resultCode != "0000" → SupplierIntegrationException으로 변환
+```
+
+Supplier A의 HTTP 4xx·5xx와 Supplier B의 `resultCode` 오류는 어댑터 바깥에서는 동일한 공급사 연동 실패로 처리합니다.
+
+### 5.3 신규 공급사 추가 방식
+
+새로운 Supplier C를 추가할 때 기존 도메인이나 검색 API를 수정하지 않는 것을 목표로 합니다. 전용 응답 DTO 작성, `SupplierAdapter` 구현, 표준 모델 변환, 설정값 등록, 빈 등록, 테스트 추가로 작업이 국한됩니다. 도메인 계층은 어댑터 인터페이스만 의존하므로 공급사별 API 형식이 도메인으로 확산되지 않습니다.
+
+## 6. 통합 검색 흐름
+
+### 6.1 검색 처리 순서
+
+1. 검색 조건 검증
+2. DB에서 숙소 매핑 조회
+3. 공급사별 숙소 코드 그룹화
+4. 공급사별 숙소 코드를 최대 50개 단위로 분할
+5. Supplier A·B 병렬 호출
+6. 각 응답을 표준 모델로 변환
+7. 재고·요금 계산
+8. 내부 식별자 매핑
+9. 결과와 공급사별 상태를 합쳐 응답
+
+### 6.2 병렬 호출
+
+공급사 호출은 `WebClient`와 `Mono`·`Flux`로 병렬 처리합니다. 각 호출은 서로 독립적이어야 하며, 한 공급사가 실패해도 다른 공급사의 결과가 취소되지 않아야 합니다. 숙소 코드가 50개를 초과하면 청크 단위로 분할하고 동시성 상한을 둡니다. 초기 구현에서는 예시 데이터가 50개 미만이므로 단일 청크 흐름을 우선 완성하고 청크 분할은 확장 가능하도록 설계합니다.
+
+### 6.3 타임아웃
+
+초기 타임아웃 값은 Connection 1초, Response 3초로 둡니다. 실제 값은 Mock 공급사의 무응답 시나리오로 검증하고 구현 과정에서 조정합니다.
+
+## 7. 부분 실패 처리
+
+공급사 호출 결과는 예외를 상위로 전파하지 않고 공급사별 처리 결과로 감쌉니다.
+
+```
+SupplierResult
+- supplier
+- status
+- latencyMs
+- resultCount
+- errorCode
+- errorMessage
+- offers
+```
+
+상태 예시는 `SUCCESS`, `PARTIAL_SUCCESS`, `TIMEOUT`, `HTTP_ERROR`, `PROTOCOL_ERROR`, `NO_DATA`입니다. 한 공급사만 실패한 경우에도 전체 검색 API는 HTTP 200으로 응답하고, 실패 사실은 공급사별 상태로 본문에 드러냅니다. 실패 목록 대신 공급사별 상태 객체를 쓰는 이유는 성공·실패와 응답 지연을 함께 담아 모니터링 지표로 이어갈 수 있기 때문입니다. 재시도와 서킷 브레이커는 필수 구현 이후 확장 사항으로 둡니다.
+
+## 8. 검색 API 초안
+
+요청
+
+```
+GET /api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2&children=0
+```
+
+응답
+
+```json
+{
+  "results": [
+    {
+      "stayId": 1,
+      "stayName": "Riverside Hotel Seoul",
+      "roomTypeId": 1,
+      "roomTypeName": "Deluxe Twin",
+      "maxOccupancy": 2,
+      "availableRoomCount": 1,
+      "supplier": "SUPPLIER_A",
+      "breakfastIncluded": false,
+      "price": { "currency": "KRW", "grossTotalAmount": 429000, "averageNightlyAmount": 143000 }
+    }
+  ],
+  "suppliers": [
+    { "supplier": "SUPPLIER_A", "status": "SUCCESS", "latencyMs": 180, "resultCount": 1 },
+    { "supplier": "SUPPLIER_B", "status": "SUCCESS", "latencyMs": 220, "resultCount": 1 }
+  ]
+}
+```
+
+검색 응답에서는 내부 숙소·객실 타입 식별자, 이름, 최대 수용 인원, 예약 가능 객실 수, 출처 공급사, 세금 포함 요금, 부분 실패 정보를 제공하며, 공급사 원본 코드가 응답 식별자로 노출되지 않도록 합니다.
+
+## 9. Mock Supplier 설계
+
+Mock Supplier는 본 애플리케이션과 별도 모듈로 분리하고 포트 `9090`을 사용합니다. 같은 포트를 쓰면 자기 자신을 호출하게 되어 스레드가 묶이면서 실제 외부 연동 문제와 구분하기 어려워지기 때문입니다. Mock은 `normal`, `error`, `no-response` 상태를 지원합니다. 장애는 Supplier A가 HTTP 503, Supplier B가 HTTP 200 + `resultCode: E503`으로 재현하고, 무응답은 연결은 되지만 일정 시간 응답하지 않는 방식으로 재현합니다. Mock의 목적은 정교한 상품 데이터가 아니라 연동 흐름의 정상·실패·무응답 재현이므로 복잡도는 낮게 유지합니다.
+
+## 10. 테스트 전략
+
+- **도메인 단위 테스트**: 숙박일수 계산, 날짜별 재고 최솟값, 재고 0 판정, 세전+세금 합산, 총액 사용, 1박 평균가 내림, 통화 보존, 조식 보존
+- **어댑터 테스트**: A 정상/503 변환, B 정상/실패 코드 변환, 잘못된 응답 형식 처리
+- **검색 서비스 테스트**: 두 공급사 성공, 한쪽 실패 후 나머지 반환, 무응답 타임아웃, 두 공급사 모두 실패, 청크 분할, 내부 식별자 변환
+- **API 통합 테스트**: 정상 요청, 잘못된 날짜·인원, 예약 불가 0 노출, 부분 실패 200, 내부 식별자 포함 확인
+
+## 11. 구현 순서
+
+1. 표준 도메인 모델과 검색 조건
+2. 매핑 엔티티와 Repository
+3. H2 File 모드 및 JPA 설정
+4. Mock Supplier 모듈
+5. Supplier A Adapter
+6. Supplier B Adapter
+7. 숙소 목록 동기화 서비스
+8. 통합 검색 오케스트레이터
+9. 타임아웃·부분 실패 처리
+10. 검색 Controller 및 응답 DTO
+11. 단위·통합 테스트
+12. README와 설계 문서 정리
+
+Day 2에서는 코드 작성보다 계층 간 책임과 데이터 흐름을 먼저 확정하고, 이후 설계 문서의 내용과 실제 코드가 어긋나지 않도록 구현합니다.
+
+## 12. Day 2의 최종 결정
+
+- 도메인은 공급사 API DTO에 의존하지 않습니다.
+- 숙소와 객실 타입은 공급사 코드와 내부 식별자를 별도로 관리합니다.
+- 객실 타입 매핑 키는 `(공급사, 숙소 코드, 객실 코드)`로 구성합니다.
+- 요금의 공통 기준은 세금 포함 총액입니다.
+- 예약 가능 객실 수는 날짜별 재고의 최솟값입니다.
+- 예약 불가 상품은 `0`으로 응답합니다.
+- Supplier A와 B의 동일 상품 추정 병합은 후순위로 둡니다.
+- 공급사 호출은 WebClient로 병렬 처리합니다.
+- Supplier B의 HTTP 200 실패 응답은 어댑터에서 실패로 변환합니다.
+- 한 공급사 실패가 전체 검색 실패로 이어지지 않도록 합니다.
+- 숙소 목록은 기동 시·주기적·수동 방식으로 동기화합니다.
+- 필수 견고성 기능을 먼저 구현하고, 재시도와 서킷 브레이커는 후순위로 둡니다.
