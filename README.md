@@ -14,6 +14,16 @@
 | 테스트 | JUnit 5 + MockWebServer | 타임아웃·지연 시나리오 재현이 간단합니다. |
 | API 문서 | SpringDoc + Swagger UI | 응답 스키마 자체가 설계 결정이므로 문서로 노출해 호출로 검증합니다. |
 
+## 모듈 구조
+
+멀티모듈 Gradle 프로젝트입니다. 루트는 빌드 조율만 담당하고, 실제 코드는 두 서브프로젝트에 있습니다.
+
+```
+stay/ (루트 — 집계자)
+├── stay-app/       본 애플리케이션 (통합 검색)
+└── mock-supplier/  Supplier A·B를 흉내 내는 Mock (포트 9090)
+```
+
 ## 빌드·실행
 
 Java 21 툴체인이 필요합니다. 별도 설치 없이 Gradle 래퍼로 빌드합니다.
@@ -25,10 +35,16 @@ Java 21 툴체인이 필요합니다. 별도 설치 없이 Gradle 래퍼로 빌�
 애플리케이션 실행:
 
 ```bash
-./gradlew bootRun
+./gradlew :stay-app:bootRun
 ```
 
-Mock 공급사는 별도 모듈로 분리해 포트 `9090`에서 실행하며, 애플리케이션은 이 Mock을 외부 공급사로 호출합니다. 실제 외부 상용 API는 호출하지 않습니다.
+Mock 공급사 실행 (포트 `9090`):
+
+```bash
+./gradlew :mock-supplier:bootRun
+```
+
+Mock은 별도 모듈로 분리해 애플리케이션이 외부 공급사로 호출합니다. 실제 외부 상용 API는 호출하지 않습니다.
 
 > 현재 저장소는 설계 확정 단계이며, 위 실행 구성(웹·JPA·Mock 모듈)은 [구현 순서](JOURNAL.md)에 따라 반영해 나갑니다.
 

@@ -7,4 +7,5 @@ pluginManagement {
 
 rootProject.name = 'stay'
 
+include 'stay-app'
 include 'mock-supplier'

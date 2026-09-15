@@ -636,3 +636,30 @@ Day 1과 같은 방식으로, AI를 선택지 생성기이자 검토자로 사�
 ### 검증
 
 `java -jar`로 Mock을 띄우고 curl로 확인했습니다. A·B 정상 응답, `POST /control/a/mode?value=error` 후 A가 HTTP 503, `POST /control/b/mode?value=error` 후 B가 HTTP 200 + `resultCode: E503`을 반환하는 것까지 확인했습니다.
+
+## 18. 구현 보강 — 모듈 레이아웃을 집계자 구조로 전환
+
+#4에서 "루트=앱 + `:mock-supplier`" 구조로 갔는데, 두 모듈이 대등하지 않아(앱은 루트, Mock은 서브) 멀티모듈 의도가 덜 드러났습니다. 소스가 아직 적어 이동 비용이 낮은 시점에 집계자 구조로 재구성했습니다.
+
+### 변경
+
+- 루트를 코드 없는 **집계자(aggregator)** 로 두고, 본 앱을 `:stay-app` 서브프로젝트로 이동했습니다.
+
+```
+stay/ (루트 — 집계자)
+├── stay-app/       본 애플리케이션
+└── mock-supplier/  Mock (포트 9090)
+```
+
+### 결정 근거
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| 레이아웃 | 집계자 + `stay-app` + `mock-supplier` | 두 모듈이 대등해 멀티모듈 구조가 분명히 읽히고, 모듈이 늘어도 일관됩니다. 루트의 빌드 조율과 앱 책임이 섞이지 않습니다. |
+| 시점 | 지금 이동 | 소스가 적어 이동 비용이 낮습니다. 나중일수록 부담이 커집니다. |
+
+### 영향
+
+- 실행 경로: `./gradlew :stay-app:bootRun`, `./gradlew :mock-supplier:bootRun`
+- H2 파일은 `stay-app` 작업 디렉터리 기준으로 생성되며, `.gitignore`는 `data/`로 위치 무관하게 제외합니다.
+- `./gradlew build`로 두 모듈 빌드·테스트 green 확인.

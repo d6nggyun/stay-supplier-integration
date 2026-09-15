@@ -40,6 +40,6 @@ out/
 .DS_Store
 
 ### H2 (file 모드 DB — 실행 시 생성) ###
-/data/
+data/
 *.mv.db
 *.trace.db
