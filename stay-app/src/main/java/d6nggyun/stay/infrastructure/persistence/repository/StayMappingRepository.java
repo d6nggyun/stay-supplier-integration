@@ -1,6 +1,7 @@
-package d6nggyun.stay.infrastructure.persistence;
+package d6nggyun.stay.infrastructure.persistence.repository;
 
 import d6nggyun.stay.domain.SupplierType;
+import d6nggyun.stay.infrastructure.persistence.entity.StayMapping;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;

@@ -39,6 +39,7 @@
 - JPA 엔티티는 Lombok `@Getter` + `@NoArgsConstructor(access = AccessLevel.PROTECTED)`(JPA용 no-arg) + `private` 생성자 + 정적 팩토리(`of`)로 만듭니다. 인자가 많거나 같은 타입(문자열)이 연달아 오면 빌더를 씁니다.
 - 전역 관심사(예외·설정·에러 핸들러 등 특정 기능에 속하지 않는 것)는 `global` 아래에 모읍니다. 커스텀 예외는 `global.exception`에 두고 공통 베이스 `StayException`을 상속하며, 예외 처리는 한 곳(향후 `global`의 `@RestControllerAdvice`)에서 일괄로 다룹니다.
 - 어댑터는 역할별로 나눕니다: 포트(`adapter.SupplierAdapter`), 정규화 결과 타입(`adapter.result`), 공급사별 구현(`adapter.{공급사}`), 공급사 원본 응답 DTO(`adapter.{공급사}.dto`).
+- 영속 계층은 `infrastructure.persistence.entity`(JPA 엔티티)와 `infrastructure.persistence.repository`(Repository)로 나눕니다. 단, 값 객체만 모인 `domain`처럼 성격이 하나인 패키지는 굳이 쪼개지 않습니다(과설계 회피).
 - 보일러플레이트는 Lombok으로 대체합니다. 생성자가 `final` 필드 대입만 하면 `@RequiredArgsConstructor`(빈 생성자 주입 포함)를 쓰고, 대입 외 로직이 있으면 명시적 생성자/팩토리를 유지합니다.
 - 요금의 공통 기준은 **세금 포함 총액(gross)**이며, 1박 평균가(총액 ÷ 박수, 내림)를 함께 제공합니다.
 - 예약 가능 객실 수는 **날짜별 재고의 최솟값**입니다. 요청 숙박일 중 응답에 빠진 날짜는 재고 0으로 취급합니다.

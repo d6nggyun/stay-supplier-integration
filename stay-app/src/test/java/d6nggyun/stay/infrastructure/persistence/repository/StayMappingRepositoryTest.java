@@ -1,5 +1,6 @@
-package d6nggyun.stay.infrastructure.persistence;
+package d6nggyun.stay.infrastructure.persistence.repository;
 
+import d6nggyun.stay.infrastructure.persistence.entity.StayMapping;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;

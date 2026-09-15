@@ -1,4 +1,4 @@
-package d6nggyun.stay.infrastructure.persistence;
+package d6nggyun.stay.infrastructure.persistence.entity;
 
 import d6nggyun.stay.domain.SupplierType;
 import jakarta.persistence.Column;

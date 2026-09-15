@@ -708,6 +708,7 @@ MockWebServer로 확인했습니다. 정상 응답 정규화(A-10023 gross 429,0
 - **역할별 분리** — DTO(원본 응답)·정규화 결과·포트·예외를 섞지 않습니다. 어디에 무엇이 있는지 이름으로 드러납니다.
 - **공통 예외 베이스 `StayException`** — 모든 커스텀 예외가 이를 상속해, 예외 처리를 한 곳(향후 `@RestControllerAdvice`)에서 일괄로 다룰 밑그림을 만듭니다.
 - **전역 관심사는 `global` 아래로** — 예외는 `global.exception`에 두고, 앞으로 WebClient 설정(#8)·전역 예외 핸들러(#10)도 `global`에 모아 루트 패키지를 기능 중심으로 유지합니다.
+- **영속 계층도 역할별로** — `infrastructure.persistence`를 `entity`(JPA 엔티티)와 `repository`(Repository)로 나눕니다. 반면 `domain`은 값 객체 5개로 성격이 하나라 flat을 유지했습니다. 쪼갤 곳과 두는 곳을 성격 기준으로 구분합니다.
 - 원본 응답 DTO는 서브패키지 접근을 위해 `public`으로 두되, 참조는 어댑터 계층 안으로만 한정합니다.
 
 테스트 green으로 검증했습니다.
