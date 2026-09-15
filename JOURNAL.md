@@ -574,3 +574,27 @@ Day 1과 같은 방식으로, AI를 선택지 생성기이자 검토자로 사�
 - `findByActiveTrue()`로 활성 매핑만 조회
 
 "같은 코드 재조회 시 기존 식별자 재사용"의 upsert 로직 자체는 숙소 목록 동기화 서비스(#7)에서 다룹니다. 이번에는 그 토대인 조회 메서드와 유니크 제약까지 확정했습니다.
+
+## 16. 구현 — #3 H2 File 모드와 JPA 설정
+
+지금까지 테스트는 내장 H2를 썼는데, 실제 앱을 설계대로 H2 **file 모드**로 띄우고 clone 후 추가 설치 없이 동작하게 맞췄습니다.
+
+### 만든 것
+
+- `src/main/resources/application.yml`: H2 file 모드 datasource + JPA 설정
+- `src/test/resources/application.yml`: 테스트용 in-memory H2 격리
+- `.gitignore`: 실행 시 생성되는 `/data/` · `*.mv.db` 제외
+
+### 구현 결정
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| DB 모드 | H2 file 모드, 상대경로 `./data/stay` | clone 후 추가 설치 없이 첫 실행 시 파일이 생성되게 합니다(스택 요건). MySQL 전환은 datasource 블록을 프로파일로 분리해 열어둡니다. |
+| `ddl-auto` | `update` | 매핑 테이블을 자동 생성하고 재시작 간 데이터를 유지합니다. 테이블 2개라 마이그레이션 도구는 과설계로 보고 두지 않습니다. |
+| `open-in-view` | `false` | 뷰 렌더링 구간까지 커넥션을 물고 지연 로딩이 새는 것을 막습니다. |
+| `AUTO_SERVER=TRUE` | 사용 | 앱 실행 중 H2 콘솔 등 병행 접속을 허용합니다(개발 편의). |
+| 테스트 격리 | 테스트는 in-memory로 분리 | 테스트가 파일 DB를 오염시키거나 테스트 간 상태가 누수되지 않게 합니다. `@DataJpaTest`는 기본 내장 대체, `@SpringBootTest`도 test 설정으로 덮습니다. |
+
+### 검증
+
+`./gradlew bootRun`으로 file 모드 기동을 확인했습니다. `create table` 2개 생성 로그, `Started StayApplication`(에러 없음), `data/stay.mv.db` 생성까지 확인했습니다. 현재 web 스타터가 없어 컨텍스트 기동 후 자동 종료되며, 상주 실행 검증은 검색 Controller가 붙는 #10에서 함께 합니다.
