@@ -663,3 +663,51 @@ stay/ (루트 — 집계자)
 - 실행 경로: `./gradlew :stay-app:bootRun`, `./gradlew :mock-supplier:bootRun`
 - H2 파일은 `stay-app` 작업 디렉터리 기준으로 생성되며, `.gitignore`는 `data/`로 위치 무관하게 제외합니다.
 - `./gradlew build`로 두 모듈 빌드·테스트 green 확인.
+
+## 19. 구현 — #5 Supplier A Adapter
+
+`WebClient`로 Mock의 A 엔드포인트를 호출하고 응답을 표준 모델로 정규화하는 어댑터를 만들었습니다. 하이브리드에 따라 구현+테스트(MockWebServer)를 병행했습니다.
+
+### 만든 것
+
+- 포트 인터페이스 `SupplierAdapter` + 공통 타입(`SupplierCatalog`, `SupplierOffer`, `SupplierSearchResult`, `SupplierIntegrationException`) — `adapter` 패키지
+- A 응답 DTO(`AHotelsResponse`·`AAvailabilityResponse`, record) — 어댑터 계층 내부 전용
+- `SupplierAAdapter` — `/a/v1/hotels`·`/a/v1/availability` 호출 후 정규화
+
+### 구현 결정
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| `SupplierOffer` vs `StayOffer` 분리 | 어댑터는 공급사 코드를 유지한 `SupplierOffer`까지 | 어댑터는 내부 식별자를 모릅니다. 공급사 코드→내부 식별자 치환은 매핑을 가진 오케스트레이터(#8) 책임이라, 정규화와 매핑을 계층으로 분리합니다. |
+| 요금 정규화 | `gross = Σ(nightlyRate + taxAmount)`, `average = gross / nights` | A는 날짜별 세전 단가+세액을 주므로 어댑터가 세금 포함 총액으로 흡수합니다. |
+| 실패 판정 | HTTP 4xx/5xx → `SupplierIntegrationException`(`onStatus`), 역직렬화 등 기타 오류도 같은 예외로 변환(`onErrorMap`) | 상위 계층이 실패 표현 방식이 아니라 "연동 실패" 사실만 다루게 합니다. |
+| 어댑터 배선 | 생성자에 `WebClient` 주입, 아직 `@Component` 아님 | 테스트는 MockWebServer로 baseUrl을 지정합니다. WebClient 빈 배선은 오케스트레이터가 필요해지는 시점(#8/설정)에 합니다. |
+| WebClient 의존성 | `spring-boot-starter-webflux` 추가 | WebClient만 필요하고 서버는 서블릿을 유지할 예정이라, `starter-web`은 Controller(#10)에서 추가합니다. |
+| MockWebServer 버전 | 4.12.0 고정 | Spring Boot BOM이 관리하지 않아 명시했습니다. |
+
+### 검증
+
+MockWebServer로 확인했습니다. 정상 응답 정규화(A-10023 gross 429,000 / avg 143,000 / 재고 min=1 / 조식 false), Namsan(A-10044) 09-02 재고 0 → 예약 가능 0, HTTP 503 → `SupplierIntegrationException`, 숙소 목록 카탈로그 정규화, 잘못된 형식 → `SupplierIntegrationException`.
+
+## 20. 구현 보강 — 패키지 구조 정리와 공통 예외 베이스
+
+`adapter` 패키지에 포트·정규화 결과·예외·구현이 섞여 역할이 불분명했습니다. 역할별로 나누고 공통 예외 베이스를 도입했습니다.
+
+### 정리
+
+| 위치 | 담는 것 |
+| --- | --- |
+| `global.exception` | 공통 베이스 `StayException` + `SupplierIntegrationException`(상속) |
+| `adapter` | 포트 인터페이스 `SupplierAdapter` |
+| `adapter.result` | 정규화 결과 타입 `SupplierCatalog`·`SupplierOffer`·`SupplierSearchResult` |
+| `adapter.a` | `SupplierAAdapter` |
+| `adapter.a.dto` | A 원본 응답 DTO `AHotelsResponse`·`AAvailabilityResponse` (record) |
+
+### 결정
+
+- **역할별 분리** — DTO(원본 응답)·정규화 결과·포트·예외를 섞지 않습니다. 어디에 무엇이 있는지 이름으로 드러납니다.
+- **공통 예외 베이스 `StayException`** — 모든 커스텀 예외가 이를 상속해, 예외 처리를 한 곳(향후 `@RestControllerAdvice`)에서 일괄로 다룰 밑그림을 만듭니다.
+- **전역 관심사는 `global` 아래로** — 예외는 `global.exception`에 두고, 앞으로 WebClient 설정(#8)·전역 예외 핸들러(#10)도 `global`에 모아 루트 패키지를 기능 중심으로 유지합니다.
+- 원본 응답 DTO는 서브패키지 접근을 위해 `public`으로 두되, 참조는 어댑터 계층 안으로만 한정합니다.
+
+테스트 green으로 검증했습니다.

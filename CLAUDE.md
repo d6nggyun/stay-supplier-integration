@@ -37,6 +37,9 @@
 - 도메인 계층은 공급사 API DTO에 의존하지 않습니다. 공급사별 형식은 어댑터 안에서만 다룹니다.
 - 도메인 계층은 JPA·Spring 등 프레임워크에도 의존하지 않습니다(프레임워크-프리). 순수 값은 `domain`에 `record`로, JPA 엔티티(매핑 테이블)는 `infrastructure`에 둡니다.
 - JPA 엔티티는 Lombok `@Getter` + `@NoArgsConstructor(access = AccessLevel.PROTECTED)`(JPA용 no-arg) + `private` 생성자 + 정적 팩토리(`of`)로 만듭니다. 인자가 많거나 같은 타입(문자열)이 연달아 오면 빌더를 씁니다.
+- 전역 관심사(예외·설정·에러 핸들러 등 특정 기능에 속하지 않는 것)는 `global` 아래에 모읍니다. 커스텀 예외는 `global.exception`에 두고 공통 베이스 `StayException`을 상속하며, 예외 처리는 한 곳(향후 `global`의 `@RestControllerAdvice`)에서 일괄로 다룹니다.
+- 어댑터는 역할별로 나눕니다: 포트(`adapter.SupplierAdapter`), 정규화 결과 타입(`adapter.result`), 공급사별 구현(`adapter.{공급사}`), 공급사 원본 응답 DTO(`adapter.{공급사}.dto`).
+- 보일러플레이트는 Lombok으로 대체합니다. 생성자가 `final` 필드 대입만 하면 `@RequiredArgsConstructor`(빈 생성자 주입 포함)를 쓰고, 대입 외 로직이 있으면 명시적 생성자/팩토리를 유지합니다.
 - 요금의 공통 기준은 **세금 포함 총액(gross)**이며, 1박 평균가(총액 ÷ 박수, 내림)를 함께 제공합니다.
 - 예약 가능 객실 수는 **날짜별 재고의 최솟값**입니다. 요청 숙박일 중 응답에 빠진 날짜는 재고 0으로 취급합니다.
 - 예약 불가 상품은 응답에서 제거하지 않고 `availableRoomCount: 0`으로 노출합니다.
