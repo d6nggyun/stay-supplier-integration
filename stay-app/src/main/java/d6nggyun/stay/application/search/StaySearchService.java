@@ -123,7 +123,11 @@ public class StaySearchService {
         return adapter.search(criteria, chunk)
                 .timeout(responseTimeout)
                 .map(result -> ChunkOutcome.success(result.offers()))
-                .onErrorResume(ex -> Mono.just(ChunkOutcome.failure(classify(ex), messageOf(ex))));
+                // 타임아웃은 Reactor 내부 문구 대신 사유를 명확히 담고, 나머지는 예외 메시지를 쓴다.
+                .onErrorResume(ex -> Mono.just(ChunkOutcome.failure(classify(ex),
+                        ex instanceof TimeoutException
+                                ? "응답 타임아웃(" + responseTimeout.toMillis() + "ms) 초과"
+                                : messageOf(ex))));
     }
 
     /** 청크 결과들을 공급사 결과로 합친다. 전부 성공/일부 성공/전부 실패를 상태로 구분한다. */

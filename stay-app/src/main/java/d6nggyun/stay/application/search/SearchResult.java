@@ -17,8 +17,15 @@ public record SearchResult(List<SupplierResult> suppliers) {
                 .toList();
     }
 
-    /** 결과를 만들 수 있는 성공 공급사가 하나라도 있는지. 전체 실패 판정(#9·#10)에 쓴다. */
-    public boolean hasAnyResult() {
-        return suppliers.stream().anyMatch(supplier -> !supplier.offers().isEmpty());
+    /** 성공(또는 부분 성공)한 공급사가 하나라도 있는지. 결과가 비어 있어도 성공은 성공이다(전체 실패 판정에 쓴다). */
+    public boolean anySucceeded() {
+        return suppliers.stream().anyMatch(supplier ->
+                supplier.status() == SupplierSearchStatus.SUCCESS
+                        || supplier.status() == SupplierSearchStatus.PARTIAL_SUCCESS);
+    }
+
+    /** 호출 대상이 하나도 없었는지(모두 SKIPPED, 또는 공급사 자체가 없음). 503 판정에 쓴다. */
+    public boolean allSkipped() {
+        return suppliers.stream().allMatch(supplier -> supplier.status() == SupplierSearchStatus.SKIPPED);
     }
 }

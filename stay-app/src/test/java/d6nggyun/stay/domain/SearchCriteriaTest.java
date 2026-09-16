@@ -1,5 +1,6 @@
 package d6nggyun.stay.domain;
 
+import d6nggyun.stay.global.exception.InvalidRequestException;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
@@ -32,24 +33,24 @@ class SearchCriteriaTest {
     void 체크인이_체크아웃과_같거나_이후면_예외다() {
         assertThatThrownBy(() -> SearchCriteria.of(
                 LocalDate.parse("2026-09-04"), LocalDate.parse("2026-09-04"), 2, 0))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(InvalidRequestException.class);
 
         assertThatThrownBy(() -> SearchCriteria.of(
                 LocalDate.parse("2026-09-05"), LocalDate.parse("2026-09-04"), 2, 0))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(InvalidRequestException.class);
     }
 
     @Test
     void 성인_인원이_0_이하면_예외다() {
         assertThatThrownBy(() -> SearchCriteria.of(
                 LocalDate.parse("2026-09-01"), LocalDate.parse("2026-09-04"), 0, 0))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(InvalidRequestException.class);
     }
 
     @Test
     void 아동_인원이_음수면_예외다() {
         assertThatThrownBy(() -> SearchCriteria.of(
                 LocalDate.parse("2026-09-01"), LocalDate.parse("2026-09-04"), 2, -1))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(InvalidRequestException.class);
     }
 }
