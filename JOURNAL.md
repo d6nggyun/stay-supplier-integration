@@ -802,6 +802,7 @@ MockWebServer로 확인했습니다. 정상 정규화(B77120 `totalPrice` 452,00
 
 1. 통합 검색 오케스트레이터 구현 (#8)
 2. application 패키지 유스케이스별 정리
+3. 타임아웃·부분 실패 보강 (#9)
 
 ## 24. 구현 — #8 통합 검색 오케스트레이터
 
@@ -853,3 +854,31 @@ MockWebServer로 확인했습니다. 정상 정규화(B77120 `totalPrice` 452,00
 ### 검증
 
 - 외부 참조가 없어 영향 범위가 작았고(패키지 선언만 변경), 전체 스위트 36건 그대로 통과
+
+## 26. 구현 — #9 타임아웃 · 부분 실패
+
+오케스트레이터에 견고성을 더했습니다. 청크 분할·동시성 상한, 청크별 응답 타임아웃, 공급사별 전체 예산, 부분 성공(`PARTIAL_SUCCESS`)·타임아웃(`TIMEOUT`) 상태를 구현했습니다.
+
+### 만든 것
+
+- `global.config`: `SupplierProperties.Search`(connect·response 타임아웃, 전체 예산, chunk-size, chunk-concurrency), `SupplierAdapterConfig`에 커넥터 연결 타임아웃
+- `application.search`: `StaySearchService`에 청크 분할 + `flatMap` 동시성 상한 + 청크 응답 `.timeout()` + 공급사 예산 `.timeout()`, 청크 결과 집계(`SUCCESS`/`PARTIAL_SUCCESS`/전부 실패 대표 상태)
+- `global.exception`: `SupplierFailureKind.TIMEOUT` 추가, `adapter.TimeoutClassifier`(연결·읽기 타임아웃 판정), 두 어댑터가 타임아웃을 `TIMEOUT` 종류로 분류
+- `SupplierResult.partialSuccess` 팩토리, `application.yml`(main·test)에 `supplier.search` 설정
+
+### 구현 결정
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| 타임아웃 배치 | 연결=커넥터, 응답·예산=오케스트레이터 `.timeout()` | 응답 타임아웃을 오케스트레이터에서 잡으면 어댑터의 실패 변환과 분리돼, 모든 타임아웃을 일관되게 `TIMEOUT` 상태로 귀결시킬 수 있습니다. |
+| 전체 예산 | 공급사별 파이프라인에 적용 | 공급사 호출이 병렬이라 벽시계 지연은 예산에 수렴합니다. 예산 초과 공급사만 `TIMEOUT`으로 마감하고 나머지는 그대로 응답합니다. |
+| 청크 분할 | 오케스트레이터가 `chunk-size`로 나눠 `flatMap(concurrency)` 호출 | 어댑터는 "받은 코드로 1회 호출"만 유지하고, 분할·동시성은 오케스트레이터 책임으로 둡니다. 예시 데이터(50개 미만)는 단일 청크로 흐릅니다. |
+| 부분 성공 | 성공 청크가 하나라도 있으면 `PARTIAL_SUCCESS`(결과 유지) | 얻은 결과를 버리지 않으면서 실패 사실을 응답에 드러냅니다(부분 실패 허용 원칙과 일관). |
+| 전부 실패 대표 상태 | 우선순위 TIMEOUT > HTTP_ERROR > PROTOCOL_ERROR | 여러 청크가 서로 다른 이유로 실패해도 하나의 상태로 결정론적으로 표기합니다. 단일 청크(정상)에서는 그 청크의 상태가 그대로 대표가 됩니다. |
+| 타임아웃 종류화 | `SupplierFailureKind.TIMEOUT` + `TimeoutClassifier` | 커넥터 연결 타임아웃처럼 어댑터를 통해 올라오는 타임아웃도 `TIMEOUT`으로 분류해, 오케스트레이터가 잡는 응답 타임아웃과 상태를 통일합니다. |
+
+### 검증
+
+- 단위(`StaySearchServiceTest` +2): 응답 지연 → `TIMEOUT`(다른 공급사는 그대로 성공), 청크 분할 시 일부 청크 실패 → 성공 청크 유지 + `PARTIAL_SUCCESS`
+- 전체 스위트 38건 통과(기존 36 + 신규 2)
+- 실제 WebClient·MockWebServer 기반 타임아웃 통합 검증과 무응답 시나리오 e2e는 컨트롤러가 붙는 #10 이후 #11에서 보강 예정

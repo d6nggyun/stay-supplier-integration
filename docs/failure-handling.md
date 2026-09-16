@@ -52,7 +52,9 @@ SKIPPED
 | 응답 역직렬화·형식 오류 | `PROTOCOL_ERROR` |
 | 매핑이 없어 호출하지 않음 | `SKIPPED` |
 
-두 공급사는 어댑터 바깥에서 같은 `SupplierIntegrationException`으로 보이므로, 오케스트레이터가 어느 규칙을 적용할지 알 수 있도록 **어댑터가 예외에 실패 종류(`SupplierFailureKind`: `HTTP_ERROR`·`PROTOCOL_ERROR`)를 실어 보냅니다.** 오케스트레이터는 이 종류를 위 표의 상태로 옮깁니다. (A의 4xx/5xx·B의 실제 HTTP 오류 → `HTTP_ERROR`, B의 `resultCode` 오류·응답 역직렬화·형식 오류 → `PROTOCOL_ERROR`)
+두 공급사는 어댑터 바깥에서 같은 `SupplierIntegrationException`으로 보이므로, 오케스트레이터가 어느 규칙을 적용할지 알 수 있도록 **어댑터가 예외에 실패 종류(`SupplierFailureKind`: `HTTP_ERROR`·`PROTOCOL_ERROR`·`TIMEOUT`)를 실어 보냅니다.** 오케스트레이터는 이 종류를 위 표의 상태로 옮깁니다. (A의 4xx/5xx·B의 실제 HTTP 오류 → `HTTP_ERROR`, B의 `resultCode` 오류·응답 역직렬화·형식 오류 → `PROTOCOL_ERROR`, 연결·읽기 타임아웃 → `TIMEOUT`)
+
+오케스트레이터가 청크 호출에 직접 적용하는 응답 타임아웃과 공급사별 전체 예산도 같은 `TIMEOUT` 상태로 귀결합니다. 한 공급사가 여러 청크로 나뉘고 그중 일부만 실패하면 성공 청크 결과를 유지한 채 `PARTIAL_SUCCESS`로 표기하며, 모든 청크가 실패하면 대표 상태를 우선순위(`TIMEOUT` > `HTTP_ERROR` > `PROTOCOL_ERROR`)로 정합니다.
 
 `NO_DATA`는 "정상 응답인데 조회 대상 자체가 0건"인 경우에만 한정해 사용하며, 정상 응답에 결과가 비어 있는 일반적인 경우는 `SUCCESS`(`resultCount: 0`)로 둡니다.
 
