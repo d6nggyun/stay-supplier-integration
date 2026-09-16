@@ -1,8 +1,9 @@
-package d6nggyun.stay.application;
+package d6nggyun.stay.application.sync;
 
 import d6nggyun.stay.adapter.SupplierAdapter;
 import d6nggyun.stay.adapter.result.SupplierCatalog;
 import d6nggyun.stay.global.config.SupplierProperties;
+import d6nggyun.stay.global.exception.SupplierFailureKind;
 import d6nggyun.stay.global.exception.SupplierIntegrationException;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
@@ -25,7 +26,7 @@ class CatalogSyncServiceTest {
         SupplierAdapter failingA = mock(SupplierAdapter.class);
         when(failingA.supplier()).thenReturn(SUPPLIER_A);
         when(failingA.fetchCatalog()).thenReturn(Mono.error(
-                new SupplierIntegrationException(SUPPLIER_A, "boom")));
+                new SupplierIntegrationException(SUPPLIER_A, SupplierFailureKind.HTTP_ERROR, "boom")));
 
         SupplierCatalog catalogB = new SupplierCatalog(SUPPLIER_B, List.of(
                 new SupplierCatalog.Stay("B77120", "Riverside Hotel Seoul", List.of(

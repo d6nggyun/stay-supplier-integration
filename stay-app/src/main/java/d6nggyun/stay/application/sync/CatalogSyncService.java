@@ -1,4 +1,4 @@
-package d6nggyun.stay.application;
+package d6nggyun.stay.application.sync;
 
 import d6nggyun.stay.adapter.SupplierAdapter;
 import d6nggyun.stay.adapter.result.SupplierCatalog;
