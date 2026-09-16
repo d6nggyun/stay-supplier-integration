@@ -10,5 +10,8 @@ public enum SupplierFailureKind {
     HTTP_ERROR,
 
     /** HTTP는 정상이지만 본문 규약 위반(B의 resultCode != "0000")이나 역직렬화·형식 오류. */
-    PROTOCOL_ERROR
+    PROTOCOL_ERROR,
+
+    /** 연결·응답 타임아웃. 오케스트레이터의 응답 타임아웃·전체 예산과 같은 상태(TIMEOUT)로 귀결한다. */
+    TIMEOUT
 }

@@ -2,10 +2,11 @@ package d6nggyun.stay.application.search;
 
 import d6nggyun.stay.adapter.SupplierAdapter;
 import d6nggyun.stay.adapter.result.SupplierOffer;
-import d6nggyun.stay.adapter.result.SupplierSearchResult;
 import d6nggyun.stay.domain.SearchCriteria;
 import d6nggyun.stay.domain.StayOffer;
 import d6nggyun.stay.domain.SupplierType;
+import d6nggyun.stay.global.config.SupplierProperties;
+import d6nggyun.stay.global.exception.SupplierFailureKind;
 import d6nggyun.stay.global.exception.SupplierIntegrationException;
 import d6nggyun.stay.infrastructure.persistence.entity.RoomTypeMapping;
 import d6nggyun.stay.infrastructure.persistence.entity.StayMapping;
@@ -17,10 +18,12 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 /**
@@ -30,7 +33,8 @@ import java.util.stream.Collectors;
  * 리액티브 경계는 이 서비스 안으로 한정한다. 병렬 조합은 Mono·Flux로 처리하되 끝에서 block()으로 받아,
  * 상위(컨트롤러)는 동기 결과를 받는다. 한 공급사가 실패해도 나머지 공급사 결과는 그대로 반환한다(부분 실패 허용).
  *
- * 개별 호출 타임아웃·전체 예산·50개 초과 청크 분할·PARTIAL_SUCCESS는 #9에서 더한다.
+ * 견고성(#9): 숙소 코드를 chunk-size 단위로 분할해 동시성 상한으로 호출하고, 청크마다 응답 타임아웃을,
+ * 공급사마다 전체 예산을 적용한다. 일부 청크만 성공하면 PARTIAL_SUCCESS, 예산·응답 초과는 TIMEOUT으로 통일한다.
  */
 @Slf4j
 @Service
@@ -40,6 +44,7 @@ public class StaySearchService {
     private final List<SupplierAdapter> adapters;
     private final StayMappingRepository stayMappingRepository;
     private final RoomTypeMappingRepository roomTypeMappingRepository;
+    private final SupplierProperties properties;
 
     public SearchResult search(SearchCriteria criteria) {
         // 1. 활성 매핑을 일괄 로딩한다. 네트워크 호출 전에 필요한 값을 모두 확보해 조회 트랜잭션을 짧게 유지한다.
@@ -85,25 +90,71 @@ public class StaySearchService {
         return new SearchResult(ordered);
     }
 
-    /** 한 공급사를 호출해 성공 시 표준 offer로, 실패 시 상태로 변환한다. defer로 구독 시점에 지연을 측정한다. */
+    /**
+     * 한 공급사를 청크 단위로 병렬 호출해 하나의 공급사 결과로 합친다.
+     * defer로 구독 시점에 지연 측정을 시작하고, 청크마다 응답 타임아웃을, 공급사 전체에 예산을 적용한다.
+     */
     private Mono<SupplierResult> callSupplier(SupplierAdapter adapter, SearchCriteria criteria, List<String> codes,
                                              Map<StayKey, Long> stayIdByKey, Map<RoomTypeKey, Long> roomTypeIdByKey) {
         SupplierType supplier = adapter.supplier();
+        SupplierProperties.Search cfg = properties.search();
+        Duration responseTimeout = Duration.ofMillis(cfg.responseTimeoutMs());
+        Duration budget = Duration.ofMillis(cfg.requestBudgetMs());
+        List<List<String>> chunks = partition(codes, Math.max(1, cfg.chunkSize()));
+        int concurrency = Math.max(1, cfg.chunkConcurrency());
+
         return Mono.defer(() -> {
             long start = System.nanoTime();
-            return adapter.search(criteria, codes)
-                    .map(result -> SupplierResult.success(
-                            supplier, elapsedMs(start), toStayOffers(result, stayIdByKey, roomTypeIdByKey)))
-                    .onErrorResume(SupplierIntegrationException.class,
-                            ex -> Mono.just(toFailure(supplier, ex, elapsedMs(start))));
+            return Flux.fromIterable(chunks)
+                    .flatMap(chunk -> callChunk(adapter, criteria, chunk, responseTimeout), concurrency)
+                    .collectList()
+                    .map(outcomes -> aggregate(supplier, outcomes, elapsedMs(start), stayIdByKey, roomTypeIdByKey))
+                    // 전체 예산 초과 시(여러 청크가 순차로 쌓이는 확장 상황) 그 공급사를 TIMEOUT으로 마감한다.
+                    .timeout(budget, Mono.fromSupplier(() -> SupplierResult.failure(
+                            supplier, SupplierSearchStatus.TIMEOUT, elapsedMs(start),
+                            SupplierSearchStatus.TIMEOUT.name(),
+                            "요청 예산(" + cfg.requestBudgetMs() + "ms) 초과")));
         });
     }
 
+    /** 청크 하나를 호출한다. 응답 타임아웃·연동 실패를 예외로 던지지 않고 청크 결과로 흡수한다. */
+    private Mono<ChunkOutcome> callChunk(SupplierAdapter adapter, SearchCriteria criteria,
+                                        List<String> chunk, Duration responseTimeout) {
+        return adapter.search(criteria, chunk)
+                .timeout(responseTimeout)
+                .map(result -> ChunkOutcome.success(result.offers()))
+                .onErrorResume(ex -> Mono.just(ChunkOutcome.failure(classify(ex), messageOf(ex))));
+    }
+
+    /** 청크 결과들을 공급사 결과로 합친다. 전부 성공/일부 성공/전부 실패를 상태로 구분한다. */
+    private SupplierResult aggregate(SupplierType supplier, List<ChunkOutcome> outcomes, long latencyMs,
+                                    Map<StayKey, Long> stayIdByKey, Map<RoomTypeKey, Long> roomTypeIdByKey) {
+        List<ChunkOutcome> failed = outcomes.stream().filter(o -> !o.success()).toList();
+        List<StayOffer> offers = outcomes.stream()
+                .filter(ChunkOutcome::success)
+                .flatMap(o -> toStayOffers(o.offers(), stayIdByKey, roomTypeIdByKey).stream())
+                .toList();
+
+        if (failed.isEmpty()) {
+            return SupplierResult.success(supplier, latencyMs, offers);
+        }
+        ChunkOutcome firstFailure = failed.get(0);
+        if (failed.size() < outcomes.size()) {
+            // 성공 청크가 하나라도 있으면 결과를 버리지 않고 부분 성공으로 표기한다.
+            return SupplierResult.partialSuccess(
+                    supplier, latencyMs, offers, firstFailure.errorCode(), firstFailure.errorMessage());
+        }
+        // 전부 실패: 대표 상태를 우선순위(TIMEOUT > HTTP_ERROR > PROTOCOL_ERROR)로 정한다.
+        SupplierSearchStatus status = representativeStatus(failed);
+        log.warn("공급사 검색 실패. supplier={}, status={}, message={}", supplier, status, firstFailure.errorMessage());
+        return SupplierResult.failure(supplier, status, latencyMs, status.name(), firstFailure.errorMessage());
+    }
+
     /** 정규화된 공급사 offer의 공급사 코드를 내부 식별자로 치환해 표준 StayOffer를 만든다. */
-    private List<StayOffer> toStayOffers(SupplierSearchResult result,
+    private List<StayOffer> toStayOffers(List<SupplierOffer> supplierOffers,
                                          Map<StayKey, Long> stayIdByKey, Map<RoomTypeKey, Long> roomTypeIdByKey) {
         List<StayOffer> offers = new ArrayList<>();
-        for (SupplierOffer offer : result.offers()) {
+        for (SupplierOffer offer : supplierOffers) {
             Long internalStayId = stayIdByKey.get(new StayKey(offer.supplier(), offer.supplierStayCode()));
             Long internalRoomTypeId = roomTypeIdByKey.get(
                     new RoomTypeKey(offer.supplier(), offer.supplierStayCode(), offer.supplierRoomTypeCode()));
@@ -128,18 +179,62 @@ public class StaySearchService {
         return offers;
     }
 
-    /** 연동 실패를 공급사별 상태로 변환한다. 실패 종류에 따라 HTTP_ERROR·PROTOCOL_ERROR로 통일한다. */
-    private SupplierResult toFailure(SupplierType supplier, SupplierIntegrationException ex, long latencyMs) {
-        SupplierSearchStatus status = switch (ex.getKind()) {
+    /** 예외를 공급사별 상태로 통일한다. 타임아웃은 TIMEOUT, 연동 실패는 실패 종류대로 매핑한다. */
+    private SupplierSearchStatus classify(Throwable ex) {
+        if (ex instanceof TimeoutException) {
+            return SupplierSearchStatus.TIMEOUT;
+        }
+        if (ex instanceof SupplierIntegrationException integration) {
+            return kindToStatus(integration.getKind());
+        }
+        return SupplierSearchStatus.PROTOCOL_ERROR;
+    }
+
+    private SupplierSearchStatus kindToStatus(SupplierFailureKind kind) {
+        return switch (kind) {
             case HTTP_ERROR -> SupplierSearchStatus.HTTP_ERROR;
             case PROTOCOL_ERROR -> SupplierSearchStatus.PROTOCOL_ERROR;
+            case TIMEOUT -> SupplierSearchStatus.TIMEOUT;
         };
-        log.warn("공급사 검색 실패. supplier={}, status={}, message={}", supplier, status, ex.getMessage());
-        return SupplierResult.failure(supplier, status, latencyMs, ex.getKind().name(), ex.getMessage());
+    }
+
+    private SupplierSearchStatus representativeStatus(List<ChunkOutcome> failed) {
+        if (failed.stream().anyMatch(o -> o.failStatus() == SupplierSearchStatus.TIMEOUT)) {
+            return SupplierSearchStatus.TIMEOUT;
+        }
+        if (failed.stream().anyMatch(o -> o.failStatus() == SupplierSearchStatus.HTTP_ERROR)) {
+            return SupplierSearchStatus.HTTP_ERROR;
+        }
+        return SupplierSearchStatus.PROTOCOL_ERROR;
+    }
+
+    private String messageOf(Throwable ex) {
+        return ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
     }
 
     private long elapsedMs(long startNanos) {
         return (System.nanoTime() - startNanos) / 1_000_000;
+    }
+
+    private static <T> List<List<T>> partition(List<T> list, int size) {
+        List<List<T>> chunks = new ArrayList<>();
+        for (int i = 0; i < list.size(); i += size) {
+            chunks.add(list.subList(i, Math.min(i + size, list.size())));
+        }
+        return chunks;
+    }
+
+    /** 청크 하나의 처리 결과. 성공 시 offer를, 실패 시 상태·사유를 담는다. */
+    private record ChunkOutcome(boolean success, List<SupplierOffer> offers,
+                               SupplierSearchStatus failStatus, String errorCode, String errorMessage) {
+
+        static ChunkOutcome success(List<SupplierOffer> offers) {
+            return new ChunkOutcome(true, offers, null, null, null);
+        }
+
+        static ChunkOutcome failure(SupplierSearchStatus status, String message) {
+            return new ChunkOutcome(false, List.of(), status, status.name(), message);
+        }
     }
 
     private record StayKey(SupplierType supplier, String stayCode) {

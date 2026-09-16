@@ -22,6 +22,13 @@ public record SupplierResult(
         return new SupplierResult(supplier, SupplierSearchStatus.SUCCESS, latencyMs, offers, null, null);
     }
 
+    /** 일부 청크만 성공. 성공한 청크의 offer는 유지하고, 실패 사유를 함께 담는다. */
+    public static SupplierResult partialSuccess(SupplierType supplier, long latencyMs, List<StayOffer> offers,
+                                                String errorCode, String errorMessage) {
+        return new SupplierResult(supplier, SupplierSearchStatus.PARTIAL_SUCCESS, latencyMs, offers,
+                errorCode, errorMessage);
+    }
+
     /** 호출 없이 스킵(매핑 없음). */
     public static SupplierResult skipped(SupplierType supplier) {
         return new SupplierResult(supplier, SupplierSearchStatus.SKIPPED, 0L, List.of(), null, null);

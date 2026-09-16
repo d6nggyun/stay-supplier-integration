@@ -24,3 +24,9 @@ supplier:
   sync:
     interval-ms: 3600000
     enabled: false
+  search:
+    connect-timeout-ms: 1000
+    response-timeout-ms: 3000
+    request-budget-ms: 6000
+    chunk-size: 50
+    chunk-concurrency: 4

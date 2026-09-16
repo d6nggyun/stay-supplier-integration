@@ -37,3 +37,10 @@ supplier:
     # 주기 스케줄러의 첫 실행이 기동 직후 초기 적재를 겸한다.
     interval-ms: 3600000
     enabled: true
+  # 검색 견고성. 값은 잠정이며 Mock 무응답 시나리오로 검증해 운영에서 튜닝한다.
+  search:
+    connect-timeout-ms: 1000     # 연결 타임아웃(커넥터)
+    response-timeout-ms: 3000    # 응답 타임아웃(청크 호출당)
+    request-budget-ms: 6000      # 전체 요청 예산(공급사당 상한)
+    chunk-size: 50               # 재고·요금 조회 1회 최대 코드 수(규약상 최대 50)
+    chunk-concurrency: 4         # 청크 동시 호출 상한

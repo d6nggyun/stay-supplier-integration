@@ -1,6 +1,7 @@
 package d6nggyun.stay.adapter.b;
 
 import d6nggyun.stay.adapter.SupplierAdapter;
+import d6nggyun.stay.adapter.TimeoutClassifier;
 import d6nggyun.stay.adapter.b.dto.BPropertiesResponse;
 import d6nggyun.stay.adapter.b.dto.BSearchResponse;
 import d6nggyun.stay.adapter.result.SupplierCatalog;
@@ -146,8 +147,10 @@ public class SupplierBAdapter implements SupplierAdapter {
         if (ex instanceof SupplierIntegrationException) {
             return ex;
         }
-        // 디코딩·형식 오류 등 HTTP 계층 밖의 실패는 규약 오류로 통일한다.
+        // 연결·읽기 타임아웃은 TIMEOUT으로, 그 밖의 디코딩·형식 오류는 규약 오류로 통일한다.
+        SupplierFailureKind kind = TimeoutClassifier.isTimeout(ex)
+                ? SupplierFailureKind.TIMEOUT : SupplierFailureKind.PROTOCOL_ERROR;
         return new SupplierIntegrationException(SupplierType.SUPPLIER_B,
-                SupplierFailureKind.PROTOCOL_ERROR, "Supplier B 연동 실패: " + ex.getMessage(), ex);
+                kind, "Supplier B 연동 실패: " + ex.getMessage(), ex);
     }
 }
