@@ -52,6 +52,8 @@ SKIPPED
 | 응답 역직렬화·형식 오류 | `PROTOCOL_ERROR` |
 | 매핑이 없어 호출하지 않음 | `SKIPPED` |
 
+두 공급사는 어댑터 바깥에서 같은 `SupplierIntegrationException`으로 보이므로, 오케스트레이터가 어느 규칙을 적용할지 알 수 있도록 **어댑터가 예외에 실패 종류(`SupplierFailureKind`: `HTTP_ERROR`·`PROTOCOL_ERROR`)를 실어 보냅니다.** 오케스트레이터는 이 종류를 위 표의 상태로 옮깁니다. (A의 4xx/5xx·B의 실제 HTTP 오류 → `HTTP_ERROR`, B의 `resultCode` 오류·응답 역직렬화·형식 오류 → `PROTOCOL_ERROR`)
+
 `NO_DATA`는 "정상 응답인데 조회 대상 자체가 0건"인 경우에만 한정해 사용하며, 정상 응답에 결과가 비어 있는 일반적인 경우는 `SUCCESS`(`resultCount: 0`)로 둡니다.
 
 `SKIPPED`는 숙소 목록 동기화 실패 등으로 해당 공급사의 매핑이 없어 호출 대상에서 빠진 경우입니다. 어떤 공급사가 왜 결과에 없는지 응답만으로 설명하기 위해 별도 상태로 둡니다. (동기화 실패 정책은 [mapping.md](mapping.md#동기화-실패-처리) 참고)
