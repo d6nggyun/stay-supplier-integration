@@ -107,6 +107,15 @@ class StaySearchIntegrationTest {
     }
 
     @Test
+    void OpenAPI_문서가_노출된다() {
+        ResponseEntity<String> apiDocs = rest.getForEntity("/v3/api-docs", String.class);
+
+        assertThat(apiDocs.getStatusCode()).isEqualTo(HttpStatus.OK);
+        // 검색 엔드포인트가 스펙에 포함된다.
+        assertThat(apiDocs.getBody()).contains("/api/v1/stays/search");
+    }
+
+    @Test
     void 매핑이_없으면_503을_반환한다() {
         roomTypeMappingRepository.deleteAll();
         stayMappingRepository.deleteAll();

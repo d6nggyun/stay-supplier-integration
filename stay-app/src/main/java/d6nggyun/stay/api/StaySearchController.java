@@ -4,6 +4,8 @@ import d6nggyun.stay.api.dto.SearchResponse;
 import d6nggyun.stay.application.search.SearchResult;
 import d6nggyun.stay.application.search.StaySearchService;
 import d6nggyun.stay.domain.SearchCriteria;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -18,12 +20,16 @@ import java.time.LocalDate;
  * 통합 검색 API. 쿼리 파라미터를 검색 조건으로 바꿔 오케스트레이터에 넘기고, 결과·공급사 상태를 응답으로 반환한다.
  * 부분 실패는 HTTP 200 + 공급사별 상태로 표현하고, 쓸 수 있는 결과가 하나도 없으면 5xx로 응답하되 본문에 상태를 담는다.
  */
+@Tag(name = "검색", description = "통합 숙박 상품 검색")
 @RestController
 @RequiredArgsConstructor
 public class StaySearchController {
 
     private final StaySearchService staySearchService;
 
+    @Operation(summary = "통합 검색",
+            description = "공급사를 병렬 조회해 표준 모델로 병합합니다. 부분 실패는 200 + 공급사별 상태, "
+                    + "전부 실패 502 / 전부 SKIPPED 503으로 응답합니다.")
     @GetMapping("/api/v1/stays/search")
     public ResponseEntity<SearchResponse> search(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate checkIn,

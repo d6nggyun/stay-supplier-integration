@@ -17,12 +17,17 @@ repositories {
 	mavenCentral()
 }
 
+// CVE-2025-48924: springdoc(swagger-core)를 통해 유입되는 commons-lang3 3.17.0의
+// 제어되지 않은 재귀(StackOverflow) 취약점. Spring Boot 관리 버전을 수정본(3.18.0)으로 올린다.
+ext['commons-lang3.version'] = '3.18.0'
+
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	implementation 'org.springframework.boot:spring-boot-starter-web'
 	// WebClient 용도로만 webflux를 둔다. 실행은 web(MVC/서블릿)로 하고, 웹 타입은 application.yml에서 servlet으로 고정한다.
 	implementation 'org.springframework.boot:spring-boot-starter-webflux'
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.6'
 	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'
 	runtimeOnly 'com.h2database:h2'
