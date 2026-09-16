@@ -947,3 +947,25 @@ MockWebServer로 확인했습니다. 정상 정규화(B77120 `totalPrice` 452,00
 
 - 단위(`TimeoutClassifierTest` 5) + 통합(`StaySearchIntegrationTest` 3): 실제 WebClient 응답 타임아웃 → `TIMEOUT`, 정상 병합, 503 자동 검증
 - 전체 스위트 53건 통과(기존 45 + 신규 8)
+
+## 29. 구현 — API 문서(SpringDoc) 및 취약점 대응
+
+스택 표(README)에 SpringDoc + Swagger UI를 채택해 두고 구현이 빠져 있어, 문서와 코드를 일치시켰습니다.
+
+### 만든 것
+
+- `springdoc-openapi-starter-webmvc-ui` 추가 → `/v3/api-docs`(스펙), `/swagger-ui.html`(UI) 자동 생성
+- `global.config.OpenApiConfig`(제목·설명·버전), 컨트롤러에 `@Tag`·`@Operation` 부여
+- 통합 테스트에 OpenAPI 노출 검증 1건 추가
+
+### 결정·대응
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| 스키마 생성 | 컨트롤러·DTO에서 자동 생성 | 응답 스키마 자체가 설계 결정이라 문서로 노출해 호출로 검증합니다. 수기 `api.md`는 설계 근거, Swagger는 실행 가능한 계약으로 역할을 나눕니다. |
+| 취약점 대응 | `commons-lang3`를 3.18.0으로 강제 | springdoc(swagger-core)가 끌어오는 `commons-lang3 3.17.0`에 CVE-2025-48924(제어되지 않은 재귀 → StackOverflow DoS, 5.3)가 있어, Spring Boot 관리 버전 속성(`ext['commons-lang3.version']`)으로 수정본으로 올렸습니다. |
+
+### 검증
+
+- `/v3/api-docs`·`/swagger-ui/index.html` 200 확인, 검색 경로가 스펙에 포함
+- `commons-lang3` 3.18.0 해석 확인(취약점 해소), 전체 스위트 54건 통과(기존 53 + 신규 1)
