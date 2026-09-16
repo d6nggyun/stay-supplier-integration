@@ -9,7 +9,7 @@
 | Language | Java 21 | 코드 전반을 직접 설명할 수 있어야 하므로 익숙한 언어를 택했습니다. |
 | Framework | Spring Boot 3.5.16 | 3.5 기반으로 재시도 정책(Resilience4j 등)을 검토한 경험이 있어 확장 범위까지 이어가기 좋고, 레퍼런스가 많아 검증 비용이 낮습니다. |
 | 실행 모델 | MVC + WebClient | WebFlux 전면 도입 없이 서버는 서블릿을 유지하고, 공급사 호출 구간만 리액티브로 둡니다. |
-| DB | H2 (file 모드) + JPA | 저장 대상이 매핑 테이블 2개뿐이라 DB 종류가 설계에 영향을 주지 않고, 추가 설치 없이 실행할 수 있습니다. MySQL 전환은 프로파일로 열어둡니다. |
+| DB | H2 (file 모드) + JPA | 저장 대상이 매핑 테이블 2개뿐이라 DB 종류가 설계에 영향을 주지 않고, 추가 설치 없이 실행할 수 있습니다. 저장 구조가 단순해 다른 RDBMS로도 큰 변경 없이 교체할 수 있습니다. |
 | Mock | 별도 모듈, 포트 9090 | 같은 포트를 쓰면 자기 자신을 호출해 스레드가 묶이므로 분리합니다. |
 | 테스트 | JUnit 5 + MockWebServer | 타임아웃·지연 시나리오 재현이 간단합니다. |
 | API 문서 | SpringDoc + Swagger UI | 응답 스키마 자체가 설계 결정이므로 문서로 노출해 호출로 검증합니다. |
@@ -46,7 +46,34 @@ Mock 공급사 실행 (포트 `9090`):
 
 Mock은 별도 모듈로 분리해 애플리케이션이 외부 공급사로 호출합니다. 실제 외부 상용 API는 호출하지 않습니다.
 
-> 현재 저장소는 설계 확정 단계이며, 위 실행 구성(웹·JPA·Mock 모듈)은 [구현 순서](JOURNAL.md)에 따라 반영해 나갑니다.
+애플리케이션이 뜨면 다음을 사용할 수 있습니다.
+
+| 용도 | URL |
+| --- | --- |
+| Swagger UI | http://localhost:8080/swagger-ui.html |
+| OpenAPI 스펙 | http://localhost:8080/v3/api-docs |
+| H2 콘솔(개발용) | http://localhost:8080/h2-console |
+
+## 동작 테스트 (Swagger UI)
+
+로컬에서 Swagger UI로 직접 호출해 확인하는 순서입니다.
+
+1. **Mock과 앱을 실행**합니다(둘 다 떠 있어야 함).
+   - Mock: `./gradlew :mock-supplier:bootRun` (포트 9090)
+   - App: `./gradlew :stay-app:bootRun` (포트 8080)
+   - 앱 기동 시 Mock이 떠 있으면 초기 동기화가 자동으로 돌아 매핑이 적재됩니다.
+2. **Swagger UI**를 엽니다: http://localhost:8080/swagger-ui.html
+3. **매핑 적재(선택)** — `관리 · POST /api/v1/admin/catalog-sync` 실행 → `200`. 즉시 재적재용이며, 자동 동기화가 이미 돌았다면 생략해도 됩니다.
+4. **정상 검색** — `검색 · GET /api/v1/stays/search`에 `checkIn=2026-09-01`, `checkOut=2026-09-04`, `adults=2`, `children=0` → `200`. `results`에 A·B 상품이 병합되고 `suppliers`가 모두 `SUCCESS`.
+5. **부분 실패·타임아웃 재현** — Mock 모드를 바꿔 다시 검색합니다(Mock은 Swagger가 없어 터미널에서 전환).
+   - 장애: `curl -X POST "http://localhost:9090/control/b/mode?value=error"` → 재검색 시 B `PROTOCOL_ERROR`, A `SUCCESS`, HTTP `200`
+   - 무응답: `curl -X POST "http://localhost:9090/control/b/mode?value=no-response"` → 약 3초 후 B `TIMEOUT`, A `SUCCESS`, HTTP `200`
+   - 복귀: `curl -X POST "http://localhost:9090/control/b/mode?value=normal"`
+6. **전체 실패 응답 확인**
+   - 두 공급사 모두 장애(`a`·`b` 모두 `error`) → 검색 `502`, 본문에 공급사별 상태
+   - 매핑이 하나도 없을 때(데이터 초기화 후 Mock 없이 앱만 기동) → 검색 `503`, 모든 공급사 `SKIPPED`
+
+> H2는 file 모드(`./data/stay.mv.db`)라 매핑이 재시작 후에도 남습니다. 매핑 없는 상태(503)를 보려면 `./data`를 지우고 앱만 기동하세요.
 
 ## 핵심 설계 의사결정
 
@@ -63,9 +90,9 @@ Mock은 별도 모듈로 분리해 애플리케이션이 외부 공급사로 호
 ### 코드 ↔ 내부 식별자 매핑 · [docs/mapping.md](docs/mapping.md)
 
 - 숙소 매핑 키는 `(supplier, stayCode)`, 객실 타입 매핑 키는 `(supplier, stayCode, roomTypeCode)`입니다. 객실 타입 코드는 숙소 내부에서만 유일하기 때문입니다.
-- 내부 식별자는 DB 시퀀스로 발급하고, `(supplier, code)` 유니크 제약 + upsert로 "같은 공급사 상품은 항상 같은 내부 식별자"를 보장합니다.
+- 내부 식별자는 DB 자동 증가(`IDENTITY`)로 발급하고, `(supplier, code)` 유니크 제약 + upsert로 "같은 공급사 상품은 항상 같은 내부 식별자"를 보장합니다. 대량 배치가 필요한 규모가 되면 `SEQUENCE` + 배치로 전환하는 경로를 남겼습니다.
 - 서로 다른 공급사의 동일 상품 추정 병합은 공통 키가 없어 오병합 위험이 있으므로 **후순위**(확장 범위)로 둡니다.
-- 숙소 목록은 정적이고 재고·요금은 동적이므로 같은 주기로 처리하지 않습니다. 동기화는 기동 시·주기·수동 트리거로 하며, 실패해도 기존 매핑으로 서비스하고 다음 주기에 복구합니다.
+- 숙소 목록은 정적이고 재고·요금은 동적이므로 같은 주기로 처리하지 않습니다. 동기화는 주기 스케줄러(첫 실행이 기동 직후 초기 적재를 겸함)와 수동 트리거로 하며, 실패해도 기존 매핑으로 서비스하고 다음 주기에 복구합니다.
 
 ### 공급사 어댑터 · [docs/supplier-adapter.md](docs/supplier-adapter.md)
 
