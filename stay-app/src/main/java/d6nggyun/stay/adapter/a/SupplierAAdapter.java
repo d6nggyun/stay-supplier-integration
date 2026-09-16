@@ -10,6 +10,7 @@ import d6nggyun.stay.domain.DailyAvailability;
 import d6nggyun.stay.domain.Price;
 import d6nggyun.stay.domain.SearchCriteria;
 import d6nggyun.stay.domain.SupplierType;
+import d6nggyun.stay.global.exception.SupplierFailureKind;
 import d6nggyun.stay.global.exception.SupplierIntegrationException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatusCode;
@@ -116,15 +117,16 @@ public class SupplierAAdapter implements SupplierAdapter {
     }
 
     private Mono<Throwable> toIntegrationError(ClientResponse response) {
-        return Mono.error(new SupplierIntegrationException(
-                SupplierType.SUPPLIER_A, "Supplier A HTTP " + response.statusCode().value()));
+        return Mono.error(new SupplierIntegrationException(SupplierType.SUPPLIER_A,
+                SupplierFailureKind.HTTP_ERROR, "Supplier A HTTP " + response.statusCode().value()));
     }
 
     private Throwable wrapUnlessIntegrationError(Throwable ex) {
         if (ex instanceof SupplierIntegrationException) {
             return ex;
         }
-        return new SupplierIntegrationException(
-                SupplierType.SUPPLIER_A, "Supplier A 연동 실패: " + ex.getMessage(), ex);
+        // 디코딩·형식 오류 등 HTTP 계층 밖의 실패는 규약 오류로 통일한다.
+        return new SupplierIntegrationException(SupplierType.SUPPLIER_A,
+                SupplierFailureKind.PROTOCOL_ERROR, "Supplier A 연동 실패: " + ex.getMessage(), ex);
     }
 }

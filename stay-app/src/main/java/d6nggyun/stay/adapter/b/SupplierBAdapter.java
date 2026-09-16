@@ -10,6 +10,7 @@ import d6nggyun.stay.domain.DailyAvailability;
 import d6nggyun.stay.domain.Price;
 import d6nggyun.stay.domain.SearchCriteria;
 import d6nggyun.stay.domain.SupplierType;
+import d6nggyun.stay.global.exception.SupplierFailureKind;
 import d6nggyun.stay.global.exception.SupplierIntegrationException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatusCode;
@@ -131,20 +132,22 @@ public class SupplierBAdapter implements SupplierAdapter {
     }
 
     private SupplierIntegrationException resultCodeError(String resultCode) {
-        return new SupplierIntegrationException(
-                SupplierType.SUPPLIER_B, "Supplier B resultCode " + resultCode);
+        // HTTP는 200이지만 본문 규약(resultCode)으로 실패를 알린 경우 → 규약 오류.
+        return new SupplierIntegrationException(SupplierType.SUPPLIER_B,
+                SupplierFailureKind.PROTOCOL_ERROR, "Supplier B resultCode " + resultCode);
     }
 
     private Mono<Throwable> toIntegrationError(ClientResponse response) {
-        return Mono.error(new SupplierIntegrationException(
-                SupplierType.SUPPLIER_B, "Supplier B HTTP " + response.statusCode().value()));
+        return Mono.error(new SupplierIntegrationException(SupplierType.SUPPLIER_B,
+                SupplierFailureKind.HTTP_ERROR, "Supplier B HTTP " + response.statusCode().value()));
     }
 
     private Throwable wrapUnlessIntegrationError(Throwable ex) {
         if (ex instanceof SupplierIntegrationException) {
             return ex;
         }
-        return new SupplierIntegrationException(
-                SupplierType.SUPPLIER_B, "Supplier B 연동 실패: " + ex.getMessage(), ex);
+        // 디코딩·형식 오류 등 HTTP 계층 밖의 실패는 규약 오류로 통일한다.
+        return new SupplierIntegrationException(SupplierType.SUPPLIER_B,
+                SupplierFailureKind.PROTOCOL_ERROR, "Supplier B 연동 실패: " + ex.getMessage(), ex);
     }
 }
