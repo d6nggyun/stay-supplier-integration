@@ -78,3 +78,27 @@ GET /api/v1/stays/search
 | 매핑이 없어 호출 대상이 하나도 없음 (전부 `SKIPPED`) | 503 |
 
 부분 실패는 오류가 아니라 HTTP 200 + 공급사별 상태로 표현합니다. 반대로 쓸 수 있는 결과가 하나도 없으면 5xx로 응답하되, 본문에는 `suppliers[]` 상태를 그대로 담아 원인을 전달합니다. (근거는 [failure-handling.md](failure-handling.md#전체-실패-시-응답) 참고)
+
+`suppliers[]`의 각 항목은 `supplier`·`status`·`latencyMs`를 항상 담고, 성공(부분 성공)일 때만 `resultCount`, 실패일 때만 `errorCode`·`errorMessage`를 담습니다(그 외에는 생략).
+
+## 잘못된 요청 응답 (400)
+
+날짜 범위·인원 검증 실패, 필수 파라미터 누락, 형식 오류는 공통 오류 형식으로 반환합니다.
+
+```json
+{ "code": "INVALID_REQUEST", "message": "checkIn은 checkOut보다 이전이어야 합니다." }
+```
+
+| code | 상황 |
+| --- | --- |
+| `INVALID_REQUEST` | 날짜 범위·인원 값이 규칙에 어긋남 |
+| `MISSING_PARAMETER` | 필수 파라미터 누락 |
+| `INVALID_PARAMETER` | 파라미터 형식 오류(예: 날짜 형식) |
+
+## 숙소 목록 수동 동기화
+
+```
+POST /api/v1/admin/catalog-sync
+```
+
+주기 동기화가 기본 경로이며, 이 엔드포인트는 즉시 재적재가 필요할 때의 보조 수단입니다. 공급사별 실패를 격리하며 동기적으로 수행하고, 완료되면 `200 OK`로 응답합니다. (동기화 정책은 [mapping.md](mapping.md) 참고)

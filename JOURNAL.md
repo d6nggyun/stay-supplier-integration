@@ -803,6 +803,7 @@ MockWebServer로 확인했습니다. 정상 정규화(B77120 `totalPrice` 452,00
 1. 통합 검색 오케스트레이터 구현 (#8)
 2. application 패키지 유스케이스별 정리
 3. 타임아웃·부분 실패 보강 (#9)
+4. 검색 API 컨트롤러·웹 노출 (#10)
 
 ## 24. 구현 — #8 통합 검색 오케스트레이터
 
@@ -882,3 +883,33 @@ MockWebServer로 확인했습니다. 정상 정규화(B77120 `totalPrice` 452,00
 - 단위(`StaySearchServiceTest` +2): 응답 지연 → `TIMEOUT`(다른 공급사는 그대로 성공), 청크 분할 시 일부 청크 실패 → 성공 청크 유지 + `PARTIAL_SUCCESS`
 - 전체 스위트 38건 통과(기존 36 + 신규 2)
 - 실제 WebClient·MockWebServer 기반 타임아웃 통합 검증과 무응답 시나리오 e2e는 컨트롤러가 붙는 #10 이후 #11에서 보강 예정
+
+## 27. 구현 — #10 검색 API 컨트롤러 · 웹 노출
+
+오케스트레이터를 HTTP로 노출했습니다. 실행 모델을 서블릿(MVC)으로 전환하고, 검색 컨트롤러·응답 DTO·전역 예외 처리·수동 동기화 트리거를 붙였습니다.
+
+### 만든 것
+
+- `build.gradle`: `spring-boot-starter-web` 추가(WebClient용 webflux는 유지), `application.yml`에 `spring.main.web-application-type=servlet` 고정
+- `api`: `StaySearchController`(GET `/api/v1/stays/search`), `SyncController`(POST `/api/v1/admin/catalog-sync`), `api.dto`(SearchResponse·StayOfferResponse·SupplierStatusResponse·PriceResponse)
+- `global.error`: `GlobalExceptionHandler`(`@RestControllerAdvice`) + `ErrorResponse`
+- `global.exception`: `InvalidRequestException`(StayException 하위) 신설, `SearchCriteria`가 클라이언트 입력 검증에 사용
+- `SearchResult`에 `anySucceeded()`·`allSkipped()`(전체 실패 판정용, 기존 `hasAnyResult` 대체)
+
+### 구현 결정
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| 웹 타입 | web+webflux 공존, `web-application-type=servlet`로 고정 | WebClient는 webflux에서 오지만 실행은 MVC로 합니다. 두 스타터가 함께 있어 실행 모델을 명시로 못 박아 모호함을 없앱니다. |
+| 웹 패키지 | 인바운드 `api`(+`api.dto`)를 아웃바운드 `adapter`와 분리 | 방향이 반대인 경계를 섞지 않습니다. 컨트롤러는 유스케이스 호출 + 응답 DTO 변환만 담당합니다. |
+| 응답 DTO 분리 | 내부 모델(StayOffer)을 그대로 노출하지 않고 DTO로 변환 | 내부 전용 `dailyAvailability`·공급사 코드가 응답에 새지 않게 합니다. `results[]`/`suppliers[]`로 분리하고, 상태별로 `resultCount`·`errorCode`를 선택 노출(null 생략). |
+| 응답 코드 | 성공(부분 포함) 200, 전부 실패 502, 전부 SKIPPED 503 | 부분 실패는 오류가 아니므로 200. 쓸 수 있는 결과가 없을 때만 5xx이되 본문엔 `suppliers[]`를 담아 원인을 전달합니다. |
+| 예외 처리 위치 | `global.error` `@RestControllerAdvice` 한 곳 | 잘못된 요청은 400, 예기치 못한 오류는 500으로 일괄 변환합니다. 5xx(전체 실패)는 오류가 아닌 정상 응답 경로라 컨트롤러에서 상태만 정합니다. |
+| 입력 검증 예외 | `SearchCriteria`는 `InvalidRequestException`(StayException 하위)을 던지고, 핸들러는 이 타입만 400으로 매핑 | 광범위한 `IllegalArgumentException → 400` 매핑은 무관한 IAE(내부 버그·라이브러리)를 400으로 오분류할 수 있어 제거했습니다. 검증 방식은 "항상 유효한 값 객체"를 위해 생성자 검증을 유지하고(@Valid 미도입: 교차 필드 검증·도메인 프레임워크-프리 유지), `Price`·`DailyAvailability`의 내부 불변식은 클라이언트 오류가 아니므로 `IllegalArgumentException`으로 남겨 500 경로로 둡니다. |
+| 타임아웃 메시지 | 응답 타임아웃 사유를 Reactor 내부 문구 대신 명시 문자열로 | e2e에서 `errorMessage`에 Reactor 내부 텍스트가 노출되어, 사유를 사람이 읽을 문구로 정리했습니다. |
+
+### 검증
+
+- 단위(`StaySearchControllerTest` 6, `SyncControllerTest` 1): 성공 200(내부 전용 필드 미노출 확인), 날짜 범위·누락·형식 400, 전부 실패 502·전부 SKIPPED 503(본문에 상태 유지), 수동 동기화 200
+- e2e: Mock(9090)+앱(8080) 기동 → 서블릿(Tomcat) 확인, 수동 동기화 후 검색 200(응답이 api.md 예시와 일치), B 무응답 모드 → B `TIMEOUT`(약 3.0초)·A `SUCCESS` 결과 유지·HTTP 200으로 부분 실패 확인
+- 전체 스위트 45건 통과(기존 38 + 신규 7)

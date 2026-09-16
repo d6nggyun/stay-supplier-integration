@@ -41,6 +41,9 @@
 - 어댑터는 역할별로 나눕니다: 포트(`adapter.SupplierAdapter`), 정규화 결과 타입(`adapter.result`), 공급사별 구현(`adapter.{공급사}`), 공급사 원본 응답 DTO(`adapter.{공급사}.dto`).
 - 영속 계층은 `infrastructure.persistence.entity`(JPA 엔티티)와 `infrastructure.persistence.repository`(Repository)로 나눕니다. 단, 값 객체만 모인 `domain`처럼 성격이 하나인 패키지는 굳이 쪼개지 않습니다(과설계 회피).
 - 애플리케이션은 유스케이스별로 나눕니다: 검색(`application.search`: 오케스트레이터 + 검색 결과 타입), 동기화(`application.sync`). 유스케이스의 결과 `record`는 서비스와 같은 패키지에 두고, 더 깊은 하위 분리는 결과 타입이 늘어날 때 검토합니다(과설계 회피).
+- 인바운드 웹 계층(REST 컨트롤러 + 응답/요청 DTO)은 `api`에 둡니다(응답 DTO는 `api.dto`). 아웃바운드 공급사 연동(`adapter`)과 방향이 반대이므로 패키지를 분리합니다. 컨트롤러는 유스케이스 서비스를 호출하고 도메인·결과를 응답 DTO로만 변환하며, 도메인/공급사 코드가 응답에 새지 않게 합니다.
+- 예외의 HTTP 변환은 `global.error`의 `@RestControllerAdvice` 한 곳에서 처리합니다(잘못된 요청 400, 예기치 못한 오류 500). 부분·전체 실패는 오류가 아니라 검색 응답의 공급사 상태와 HTTP 코드(200/502/503)로 표현합니다.
+- 클라이언트 입력 검증 실패는 `InvalidRequestException`(StayException 하위)으로 던지고 핸들러가 이 타입만 400으로 매핑합니다. 광범위한 `IllegalArgumentException`을 400으로 매핑하지 않습니다(무관한 IAE의 오분류 방지). 도메인 값 객체는 "항상 유효" 원칙에 따라 생성자에서 검증하며(프레임워크-프리 유지 위해 `@Valid`/Bean Validation 애노테이션을 도메인에 붙이지 않음), 공급사 데이터·내부 계산의 불변식 위반은 클라이언트 오류가 아니므로 `IllegalArgumentException`으로 둡니다.
 - 보일러플레이트는 Lombok으로 대체합니다. 생성자가 `final` 필드 대입만 하면 `@RequiredArgsConstructor`(빈 생성자 주입 포함)를 쓰고, 대입 외 로직이 있으면 명시적 생성자/팩토리를 유지합니다.
 - 요금의 공통 기준은 **세금 포함 총액(gross)**이며, 1박 평균가(총액 ÷ 박수, 내림)를 함께 제공합니다.
 - 예약 가능 객실 수는 **날짜별 재고의 최솟값**입니다. 요청 숙박일 중 응답에 빠진 날짜는 재고 0으로 취급합니다.
