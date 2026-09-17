@@ -120,6 +120,14 @@ curl -s localhost:8080/actuator/prometheus | grep 'resilience4j_circuitbreaker_s
 # 이후 검색하면 B가 CIRCUIT_OPEN 상태로 응답(호출 차단, latencyMs≈0)
 ```
 
+**캐시 지표(Caffeine)** — 같은 조건을 두 번 검색하면 두 번째는 히트(응답이 훨씬 빠름).
+
+```bash
+for n in 1 2; do curl -s -o /dev/null -w "search$n: %{time_total}s\n" "localhost:8080/api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2"; done
+curl -s localhost:8080/actuator/prometheus | grep 'cache="supplier.search.cache"'
+#   cache_gets_total{...,result="hit"} / result="miss", cache_puts_total, cache_size
+```
+
 ## 핵심 설계 의사결정
 
 각 결정의 상세 근거는 [docs/](docs/) 문서에 있습니다. 아래는 요약입니다.
@@ -179,7 +187,8 @@ GET /api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2&childre
 | [docs/failure-handling.md](docs/failure-handling.md) | 부분 실패 처리 · 공급사별 상태 객체 |
 | [docs/resilience.md](docs/resilience.md) | 재시도 · 서킷 브레이커 |
 | [docs/observability.md](docs/observability.md) | 연동 지표 · 모니터링 |
-| [docs/extensions.md](docs/extensions.md) | 확장 설계 초안 (캐시 · 정규화 실패 격리 · 중복 병합 · 통화 · 예약 대행) |
+| [docs/cache.md](docs/cache.md) | 요금/재고 캐시 |
+| [docs/extensions.md](docs/extensions.md) | 확장 설계 초안 (정규화 실패 격리 · 중복 병합 · 통화 · 예약 대행) |
 | [docs/mock-supplier.md](docs/mock-supplier.md) | Mock 공급사 (정상 · 장애 · 무응답) |
 | [docs/testing.md](docs/testing.md) | 테스트 전략 |
 | [docs/api.md](docs/api.md) | 통합 검색 API 명세 |
@@ -190,6 +199,6 @@ GET /api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2&childre
 ## 구현 범위
 
 - **필수**: 통합 모델, 코드↔식별자 매핑, 공급사 어댑터, 통합 검색 API, 타임아웃·부분 실패·실패 판정 통일, Mock 공급사, 설계 근거 문서
-- **확장(구현함)**: 재시도, 서킷 브레이커 ([docs/resilience.md](docs/resilience.md))
-- **확장(향후, 설계 초안 있음)**: 캐시, 정규화 실패 격리, 중복 상품 병합, 다중 통화, 예약 대행 ([docs/extensions.md](docs/extensions.md))
+- **확장(구현함)**: 재시도·서킷 브레이커 ([docs/resilience.md](docs/resilience.md)), 연동 지표·모니터링 ([docs/observability.md](docs/observability.md)), 요금/재고 캐시 ([docs/cache.md](docs/cache.md))
+- **확장(향후, 설계 초안 있음)**: 정규화 실패 격리, 중복 상품 병합, 다중 통화, 예약 대행 ([docs/extensions.md](docs/extensions.md))
 - **범위 밖**: 인증·인가, 결제, 관리자 기능, 프론트엔드, 실제 외부 API 호출, 지역·키워드 검색 필터, 정렬·페이징

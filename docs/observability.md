@@ -12,6 +12,7 @@
 | 상태 분포 | `HTTP_ERROR`·`PROTOCOL_ERROR`·`CIRCUIT_OPEN`·`SKIPPED` 건수 | 상태별 카운터 |
 | 서킷 상태·전이 | open/half-open/closed, 실패율 | Resilience4j → Micrometer 자동 |
 | 재시도 | 재시도 횟수·성공/실패 | Resilience4j → Micrometer 자동 |
+| 캐시 | 히트/미스·크기·축출 | Caffeine → Micrometer 자동 (`cache_gets_total{cache="supplier.search.cache",result}`) |
 
 ## 2. 어떻게 수집하나
 

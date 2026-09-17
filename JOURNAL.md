@@ -1129,3 +1129,29 @@ behavior는 보존됩니다(오늘 기준 `active`는 항상 true였으므로 `f
 이는 **"고객 대기 상한을 재시도 완주보다 우선"**한 의도된 선택입니다. 무응답을 9s까지 재시도하기보다 예산(6s)에서 끊고 나머지 공급사로 응답하는 편이 낫습니다. "타임아웃 발생"은 재시도 지표가 아니라 공급사별 상태 지표 `supplier.search.calls{status="TIMEOUT"}`에서 확인합니다. 근거를 [resilience.md](docs/resilience.md)·[observability.md](docs/observability.md)에 기재했습니다.
 
 - e2e로 대비 확인: no-response 검색 1회 → 재시도 카운터 0(예산 취소), 상태 `TIMEOUT` / E503 검색 1회 → `failed_with_retry` +1(예산 안에 재시도 완주).
+
+## 38. 구현 — 요금/재고 캐시 (확장)
+
+반복되는 인기 질의의 공급사 부하·지연을 줄이기 위해 청크 호출 결과를 캐시했습니다. 확정 설계는 [docs/cache.md](docs/cache.md)에 있습니다.
+
+### 만든 것
+
+- Caffeine 의존성, `application.search.ChunkResultCache`(Caffeine `AsyncCache`, 키 `(supplier, 정렬 코드, 조건)`, TTL 지터, 성공만 캐시, Micrometer 통계)
+- `StaySearchService.callChunk`에서 캐시를 가장 바깥에 배치(히트면 타임아웃·재시도·서킷·공급사 호출 생략)
+- `supplier.cache.*` 설정(main), 테스트는 공유 컨텍스트 오염 방지를 위해 비활성
+
+### 구현 결정
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| 캐시 단위 | 청크 단위 `(supplier, 정렬 코드, 조건)` | 코드가 안정적(활성 매핑)이라 청크 단위로도 재사용이 큼. 숙소 단위(부분 변경에 견고)는 미스 배치 조회·병합 복잡도가 커 규모 확장 시로 미룸 |
+| 위치 | 리질리언스보다 바깥 | 히트면 호출 자체가 없음. 성공만 캐시(실패·타임아웃·서킷은 다음에 재시도되게) |
+| 스탬피드 방지 | single-flight(Caffeine `AsyncCache` 내장) + TTL 지터 | 인기 키 만료 시 몰림·동시 만료 분산 |
+| TTL | 짧게(설정값, 잠정) + 예약 확정 시 재검증 전제 | 요금·재고 신선도. 값은 변동 속도·히트율로 튜닝. 확정 재검증이 stale 안전망 |
+| 저장소 | 로컬 Caffeine, 다중 인스턴스면 Redis 승격 | 단일 인스턴스엔 인프로세스로 충분 |
+
+### 검증
+
+- 단위(`StaySearchServiceTest` +1): 같은 조건 재검색 시 공급사 `search`가 1회만 호출(캐시 히트)
+- e2e: 같은 조건 2회 검색 → 2회차 응답 시간 대폭 단축(77ms→10ms), `cache_gets_total{result="hit"}=2`·`miss=2`(공급사 2개=엔트리 2개, 1회차 미스·2회차 히트)
+- 전체 스위트 60건 통과(기존 59 + 신규 1)
