@@ -1121,3 +1121,11 @@ behavior는 보존됩니다(오늘 기준 `active`는 항상 true였으므로 `f
 - e2e: 신규 인스턴스에서 B=E503로 검색 1회 → `resilience4j_retry_calls_total{kind="failed_with_retry"}` +1(B 재시도), A는 `successful_without_retry` +1. 개선 전이면 B는 `failed_without_retry`였음.
 - 문서 정정: [resilience.md](docs/resilience.md)·[failure-handling.md](docs/failure-handling.md)의 "resultCode=비재시도" 서술을 일시적 코드 구분으로 갱신
 - 전체 스위트 59건 통과(기존 58 + 신규 1)
+
+## 37. 메모 — 재시도·전체 예산 상호작용과 지표
+
+지표 확인 중, 무응답(no-response) 공급사는 `resilience4j_retry_calls_total`에 재시도가 **집계되지 않는** 점을 확인했습니다. 원인은 `responseTimeout×maxAttempts`(3s×3=9s)가 전체 예산(6s)보다 커서, **재시도가 소진되기 전에 예산이 호출을 취소**하고, Reactor의 취소는 실패가 아니라 재시도 카운터가 기록하지 않기 때문입니다.
+
+이는 **"고객 대기 상한을 재시도 완주보다 우선"**한 의도된 선택입니다. 무응답을 9s까지 재시도하기보다 예산(6s)에서 끊고 나머지 공급사로 응답하는 편이 낫습니다. "타임아웃 발생"은 재시도 지표가 아니라 공급사별 상태 지표 `supplier.search.calls{status="TIMEOUT"}`에서 확인합니다. 근거를 [resilience.md](docs/resilience.md)·[observability.md](docs/observability.md)에 기재했습니다.
+
+- e2e로 대비 확인: no-response 검색 1회 → 재시도 카운터 0(예산 취소), 상태 `TIMEOUT` / E503 검색 1회 → `failed_with_retry` +1(예산 안에 재시도 완주).

@@ -23,6 +23,8 @@
 
 성공률·타임아웃 비율은 별도 게이지로 저장하지 않고, 상태별 카운터에서 **집계(쿼리) 시 유도**합니다. 예: 성공률 = `calls{status="SUCCESS"}` / `sum(calls)`. 원자료(카운터)만 남기고 파생 지표는 대시보드에서 계산하는 편이 유연합니다.
 
+> **재시도 지표 읽는 법 주의**: 재시도가 전체 예산에 걸려 취소되면(무응답 등 각 시도가 응답 타임아웃을 다 쓰는 경우) Reactor의 취소는 실패가 아니라서 `resilience4j_retry_calls_total`에 집계되지 않습니다. 이는 "대기 상한을 재시도 완주보다 우선"한 의도된 동작입니다([resilience.md](resilience.md) 참고). 그 공급사의 타임아웃은 **`supplier.search.calls{status="TIMEOUT"}`** 로 확인합니다. 즉 "타임아웃 발생"은 공급사별 상태 지표로, "예산 안에 완주한 재시도"는 재시도 지표로 봅니다.
+
 ## 3. 어디로 노출
 
 - Actuator 엔드포인트: `/actuator/metrics`(개별 조회), `/actuator/prometheus`(스크레이프 포맷)
