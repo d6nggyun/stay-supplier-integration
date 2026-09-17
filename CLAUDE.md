@@ -55,7 +55,7 @@
 ### 매핑
 - 숙소 매핑 키는 `(supplier, stayCode)`, 객실 타입 매핑 키는 `(supplier, stayCode, roomTypeCode)`입니다.
 - 내부 식별자는 DB 자동 증가(`IDENTITY`)로 발급하고, `(supplier, code)` 유니크 제약 + upsert로 "같은 공급사 상품은 항상 같은 내부 식별자"를 보장합니다. 대량 쓰기 배치가 필요할 규모가 되면 `SEQUENCE` + 배치로 전환하는 경로를 [docs/mapping.md](docs/mapping.md)에 남겼습니다.
-- 서로 다른 공급사의 동일 상품 추정 병합은 **후순위**(확장 범위)로 둡니다. 현재는 각각 별도 상품으로 노출합니다.
+- 서로 다른 공급사의 동일 상품 추정 병합은 **하지 않습니다**(각각 별도 상품으로 노출). 오병합 리스크가 커 서빙 경로 자동 병합은 지양하며, 병합은 권위 큐레이션 정본으로만 향후 검토합니다. ([docs/extensions.md](docs/extensions.md) §3)
 - 검색 대상은 저장된 모든 매핑입니다(별도 활성/비활성 개념을 두지 않음). 카탈로그에서 사라진 숙소는 실시간 재고 조회에서 응답이 없어 결과에서 자연히 제외됩니다.
 - 숙소 목록 동기화는 기동 시·주기·수동 트리거로 하며, 실패해도 기존 매핑으로 서비스하고 다음 주기에 복구합니다. 매핑이 없는 공급사는 검색에서 제외하고 응답에 `SKIPPED`로 표기합니다.
 
@@ -75,7 +75,8 @@
 
 - **필수**: 통합 모델, 코드↔식별자 매핑, 공급사 어댑터, 통합 검색 API, 타임아웃·부분 실패·실패 판정 통일, Mock 공급사, 설계 근거 문서
 - **확장(구현함)**: 재시도·서킷 브레이커([docs/resilience.md](docs/resilience.md)), 연동 지표·모니터링([docs/observability.md](docs/observability.md)), 요금/재고 캐시([docs/cache.md](docs/cache.md)), 정규화 실패 격리([docs/supplier-adapter.md](docs/supplier-adapter.md) §4)
-- **확장(향후, 설계 초안 있음)**: 중복 상품 병합, 다중 통화, 예약 대행. 설계 초안은 [docs/extensions.md](docs/extensions.md)에 있으며, 여력이 생기면 하나씩 구현합니다.
+- **확장(결정)**: 중복 상품 병합 — 오병합 리스크로 자동 병합하지 않고 분리 노출 유지, 병합은 권위 큐레이션 정본으로만(향후) ([docs/extensions.md](docs/extensions.md) §3)
+- **확장(향후, 설계 초안 있음)**: 다중 통화, 예약 대행. 설계 초안은 [docs/extensions.md](docs/extensions.md)에 있으며, 여력이 생기면 하나씩 구현합니다.
 - **범위 밖**: 인증·인가, 결제, 관리자 기능, 프론트엔드, 실제 외부 API 호출, 지역·키워드 검색 필터, 정렬·페이징
 
 ## 7. AI 활용 원칙
