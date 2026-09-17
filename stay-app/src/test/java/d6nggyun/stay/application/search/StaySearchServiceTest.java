@@ -18,6 +18,7 @@ import d6nggyun.stay.infrastructure.persistence.repository.StayMappingRepository
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 
@@ -40,6 +41,8 @@ class StaySearchServiceTest {
 
     private final SearchCriteria criteria = new SearchCriteria(
             LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 4), 2, 0);
+    // JUnit5는 테스트마다 인스턴스를 새로 만들어, 이 레지스트리는 테스트별로 격리된다.
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
     @Test
     void 두_공급사_결과를_병합하고_공급사_코드를_내부_식별자로_치환한다() {
@@ -240,6 +243,35 @@ class StaySearchServiceTest {
         assertThat(result.suppliers().get(0).status()).isEqualTo(SupplierSearchStatus.HTTP_ERROR);
     }
 
+    @Test
+    void 공급사별_처리_결과를_지표로_기록한다() {
+        SupplierAdapter adapterA = mock(SupplierAdapter.class);
+        when(adapterA.supplier()).thenReturn(SUPPLIER_A);
+        when(adapterA.search(eq(criteria), eq(List.of("H1")))).thenReturn(Mono.just(
+                new SupplierSearchResult(SUPPLIER_A, List.of(offer(SUPPLIER_A, "H1", "Stay A", "R1", "Room A")))));
+
+        SupplierAdapter adapterB = mock(SupplierAdapter.class);
+        when(adapterB.supplier()).thenReturn(SUPPLIER_B); // B는 매핑 없음 → SKIPPED
+
+        StaySearchService service = service(
+                List.of(adapterA, adapterB),
+                List.of(stayMapping(SUPPLIER_A, "H1", 10L)),
+                List.of(roomTypeMapping(SUPPLIER_A, "H1", "R1", 100L)));
+
+        service.search(criteria);
+
+        // 상태별 호출 카운터가 기록된다.
+        assertThat(meterRegistry.get("supplier.search.calls")
+                .tags("supplier", "SUPPLIER_A", "status", "SUCCESS").counter().count()).isEqualTo(1.0);
+        assertThat(meterRegistry.get("supplier.search.calls")
+                .tags("supplier", "SUPPLIER_B", "status", "SKIPPED").counter().count()).isEqualTo(1.0);
+        // 실제 호출한 A만 지연 타이머가 기록되고, SKIPPED인 B는 타이머가 없다.
+        assertThat(meterRegistry.get("supplier.search.latency")
+                .tags("supplier", "SUPPLIER_A").timer().count()).isEqualTo(1L);
+        assertThat(meterRegistry.find("supplier.search.latency")
+                .tags("supplier", "SUPPLIER_B").timer()).isNull();
+    }
+
     private StaySearchService service(List<SupplierAdapter> adapters,
                                      List<StayMapping> stayMappings, List<RoomTypeMapping> roomTypeMappings) {
         // 기본값: 타임아웃은 넉넉하게(타임아웃 경로를 타지 않도록), 단일 청크(size 50).
@@ -263,7 +295,8 @@ class StaySearchServiceTest {
         SupplierProperties properties = new SupplierProperties(null, null, null, search, null);
         // 서킷은 기본(닫힘)으로 둔다.
         CircuitBreakerRegistry circuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults();
-        return new StaySearchService(adapters, stayRepo, roomTypeRepo, properties, retry, circuitBreakerRegistry);
+        return new StaySearchService(
+                adapters, stayRepo, roomTypeRepo, properties, retry, circuitBreakerRegistry, meterRegistry);
     }
 
     /** 일시적 실패(타임아웃·retryable 연동 실패)만 재시도하는 Retry. 백오프는 테스트를 위해 최소로 둔다. */

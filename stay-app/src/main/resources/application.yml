@@ -59,3 +59,10 @@ supplier:
       sliding-window-size: 20
       minimum-number-of-calls: 10      # 이 횟수 이상 쌓여야 판정
       wait-duration-in-open-ms: 10000  # open 유지 시간
+
+# 연동 지표 노출. 최소 엔드포인트만 연다(운영에서는 관리 포트·인증으로 보호).
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, prometheus

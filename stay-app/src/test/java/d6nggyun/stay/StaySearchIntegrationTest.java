@@ -13,6 +13,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpStatus;
@@ -32,6 +33,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 전체 스택 통합 테스트. 컨트롤러 → 오케스트레이터 → 실제 WebClient → MockWebServer(공급사 대역)를 태워,
  * 정상 병합과 실제 응답 타임아웃(부분 실패)을 자동 검증한다. 매핑은 DB에 직접 심어 검색 경로만 격리한다.
  */
+// @SpringBootTest는 기본적으로 메트릭 익스포트를 끄므로, 프로메테우스 노출 검증을 위해 관측성을 켠다.
+@AutoConfigureObservability
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class StaySearchIntegrationTest {
 
@@ -104,6 +107,16 @@ class StaySearchIntegrationTest {
         List<String> bStatus = JsonPath.read(body, "$.suppliers[?(@.supplier=='SUPPLIER_B')].status");
         assertThat(aStatus).containsExactly("SUCCESS");
         assertThat(bStatus).containsExactly("TIMEOUT");
+    }
+
+    @Test
+    void 검색_후_공급사_지표가_프로메테우스로_노출된다() {
+        search(); // 지표를 남긴다
+
+        ResponseEntity<String> metrics = rest.getForEntity("/actuator/prometheus", String.class);
+
+        assertThat(metrics.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(metrics.getBody()).contains("supplier_search_calls");
     }
 
     @Test

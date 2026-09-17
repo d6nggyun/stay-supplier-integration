@@ -32,6 +32,10 @@ dependencies {
 	implementation 'io.github.resilience4j:resilience4j-reactor:2.2.0'
 	implementation 'io.github.resilience4j:resilience4j-retry:2.2.0'
 	implementation 'io.github.resilience4j:resilience4j-circuitbreaker:2.2.0'
+	// 연동 지표·모니터링(Micrometer + Actuator, Prometheus 노출). Resilience4j 지표 바인딩 포함.
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	implementation 'io.micrometer:micrometer-registry-prometheus'
+	implementation 'io.github.resilience4j:resilience4j-micrometer:2.2.0'
 	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'
 	runtimeOnly 'com.h2database:h2'

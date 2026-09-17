@@ -8,6 +8,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * 예외를 한 곳에서 HTTP 응답으로 변환한다.
@@ -34,6 +35,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MissingServletRequestParameterException.class)
     public ResponseEntity<ErrorResponse> handleMissingParameter(MissingServletRequestParameterException ex) {
         return badRequest("MISSING_PARAMETER", "'" + ex.getParameterName() + "' 파라미터는 필수입니다.");
+    }
+
+    /** 매핑되지 않은 경로. 프레임워크의 404를 500으로 뭉개지 않도록 별도로 처리한다. */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNoResource(NoResourceFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ErrorResponse("NOT_FOUND", "요청 경로를 찾을 수 없습니다."));
     }
 
     /** 그 밖의 예기치 못한 오류. 내부 메시지는 노출하지 않는다. */

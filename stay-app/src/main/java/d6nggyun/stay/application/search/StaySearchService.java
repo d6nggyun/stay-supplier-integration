@@ -18,6 +18,7 @@ import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.reactor.circuitbreaker.operator.CircuitBreakerOperator;
 import io.github.resilience4j.reactor.retry.RetryOperator;
 import io.github.resilience4j.retry.Retry;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -53,6 +54,7 @@ public class StaySearchService {
     private final SupplierProperties properties;
     private final Retry supplierSearchRetry;
     private final CircuitBreakerRegistry circuitBreakerRegistry;
+    private final MeterRegistry meterRegistry;
 
     public SearchResult search(SearchCriteria criteria) {
         // 1. 매핑을 일괄 로딩한다. 네트워크 호출 전에 필요한 값을 모두 확보해 조회 트랜잭션을 짧게 유지한다.
@@ -95,7 +97,24 @@ public class StaySearchService {
                 .sorted(Comparator.comparing(SupplierResult::supplier))
                 .toList();
 
+        recordMetrics(ordered);
         return new SearchResult(ordered);
+    }
+
+    /**
+     * 공급사별 처리 결과를 지표로 남긴다. 성공률·타임아웃 비율은 상태별 카운터에서 집계 시 유도한다.
+     * SKIPPED는 실제 호출이 아니므로 지연 타이머에서는 제외한다. (지표 설계는 docs/observability.md 참고)
+     */
+    private void recordMetrics(List<SupplierResult> results) {
+        for (SupplierResult result : results) {
+            String supplier = result.supplier().name();
+            meterRegistry.counter("supplier.search.calls", "supplier", supplier, "status", result.status().name())
+                    .increment();
+            if (result.status() != SupplierSearchStatus.SKIPPED) {
+                meterRegistry.timer("supplier.search.latency", "supplier", supplier)
+                        .record(Duration.ofMillis(result.latencyMs()));
+            }
+        }
     }
 
     /**
