@@ -194,9 +194,9 @@ class StaySearchServiceTest {
     private StaySearchService service(List<SupplierAdapter> adapters, List<StayMapping> stayMappings,
                                      List<RoomTypeMapping> roomTypeMappings, SupplierProperties.Search search) {
         StayMappingRepository stayRepo = mock(StayMappingRepository.class);
-        when(stayRepo.findByActiveTrue()).thenReturn(stayMappings);
+        when(stayRepo.findAll()).thenReturn(stayMappings);
         RoomTypeMappingRepository roomTypeRepo = mock(RoomTypeMappingRepository.class);
-        when(roomTypeRepo.findByActiveTrue()).thenReturn(roomTypeMappings);
+        when(roomTypeRepo.findAll()).thenReturn(roomTypeMappings);
         SupplierProperties properties = new SupplierProperties(null, null, null, search);
         return new StaySearchService(adapters, stayRepo, roomTypeRepo, properties);
     }

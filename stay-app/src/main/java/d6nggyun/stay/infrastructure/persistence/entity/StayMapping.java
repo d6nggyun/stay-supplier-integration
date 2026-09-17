@@ -52,12 +52,6 @@ public class StayMapping {
     @Column(name = "stay_name")
     private String stayName;
 
-    @Column(nullable = false)
-    private boolean active;
-
-    @Column(name = "last_seen_at")
-    private Instant lastSeenAt;
-
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
@@ -70,8 +64,6 @@ public class StayMapping {
         this.supplier = supplier;
         this.supplierStayCode = supplierStayCode;
         this.stayName = stayName;
-        this.active = true;
-        this.lastSeenAt = Instant.now();
     }
 
     public static StayMapping of(SupplierType supplier, String supplierStayCode, String stayName) {
@@ -81,7 +73,5 @@ public class StayMapping {
     /** 동기화에서 같은 코드가 다시 조회됐을 때, 기존 내부 식별자를 유지한 채 최신 상태로 갱신한다. */
     public void refreshFrom(String stayName) {
         this.stayName = stayName;
-        this.active = true;
-        this.lastSeenAt = Instant.now();
     }
 }

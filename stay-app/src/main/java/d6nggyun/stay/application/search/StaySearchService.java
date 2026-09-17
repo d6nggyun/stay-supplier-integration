@@ -47,9 +47,9 @@ public class StaySearchService {
     private final SupplierProperties properties;
 
     public SearchResult search(SearchCriteria criteria) {
-        // 1. 활성 매핑을 일괄 로딩한다. 네트워크 호출 전에 필요한 값을 모두 확보해 조회 트랜잭션을 짧게 유지한다.
-        List<StayMapping> stayMappings = stayMappingRepository.findByActiveTrue();
-        List<RoomTypeMapping> roomTypeMappings = roomTypeMappingRepository.findByActiveTrue();
+        // 1. 매핑을 일괄 로딩한다. 네트워크 호출 전에 필요한 값을 모두 확보해 조회 트랜잭션을 짧게 유지한다.
+        List<StayMapping> stayMappings = stayMappingRepository.findAll();
+        List<RoomTypeMapping> roomTypeMappings = roomTypeMappingRepository.findAll();
 
         // 2. 공급사별 호출 대상 코드 그룹화 + 코드 → 내부 식별자 치환용 조회 맵 구성
         Map<SupplierType, List<String>> codesBySupplier = stayMappings.stream()
@@ -100,6 +100,8 @@ public class StaySearchService {
         SupplierProperties.Search cfg = properties.search();
         Duration responseTimeout = Duration.ofMillis(cfg.responseTimeoutMs());
         Duration budget = Duration.ofMillis(cfg.requestBudgetMs());
+        // 청크 크기는 설정값(supplier.search.chunk-size)을 그대로 쓴다. 공급사 규약상 상한(최대 50)은
+        // 코드에 중복으로 박지 않고 설정값과 그 주석으로 명시한다. 여기서는 0/음수만 분할 알고리즘 보호를 위해 막는다.
         List<List<String>> chunks = partition(codes, Math.max(1, cfg.chunkSize()));
         int concurrency = Math.max(1, cfg.chunkConcurrency());
 
