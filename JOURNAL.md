@@ -994,6 +994,7 @@ README를 실제 구현 상태에 맞춰 확정하고, Swagger 기반 동작 테
 2. 매핑 비활성화(`active`/`last_seen_at`) 제거
 3. 재시도·서킷 브레이커 (확장)
 4. 연동 지표·모니터링 (확장)
+5. 확장 5종 설계 초안
 
 ## 31. 개선 — 응답 버퍼 상한과 청크 상한 정책 (리뷰 반영)
 
@@ -1081,3 +1082,42 @@ behavior는 보존됩니다(오늘 기준 `active`는 항상 true였으므로 `f
 - 통합(`StaySearchIntegrationTest` +1): `@AutoConfigureObservability`로 메트릭 익스포트를 켜고 `/actuator/prometheus`에 `supplier_search_*` 노출 확인
 - 실기동 확인: `supplier_search_calls_total`·`supplier_search_latency_seconds_*`, `resilience4j_retry_calls_total`·`resilience4j_circuitbreaker_state` 노출
 - 전체 스위트 58건 통과(기존 56 + 신규 2)
+
+## 35. 설계 — 확장 5종 초안
+
+여력이 생기면 하나씩 구현하기로 하고, 먼저 5개 확장의 설계 초안을 [docs/extensions.md](docs/extensions.md)에 정리했습니다. 구현은 아직 없습니다.
+
+### 대상·핵심 판단
+
+| 확장 | 핵심 판단 |
+| --- | --- |
+| 요금/재고 캐시 | 짧은 TTL + single-flight + 지터로 스탬피드 방지, 표시 지연은 허용하되 예약 확정은 실시간 재검증 |
+| 정규화 실패 격리 | 스킵 대신 dead-letter로 사유 코드와 함께 격리(best-effort), 검색은 그대로 부분 성공 |
+| 중복 상품 병합 | 정본 그룹핑 모델(큐레이션 우선), 서빙 경로의 자동 퍼지 병합은 오병합 위험으로 지양 |
+| 통화 처리 | 원본=권위·표시 환산=근사(환율 시각 표기), 비교·정렬은 표시 통화, 확정은 원본 통화 |
+| 예약 대행 | saga + 멱등 키 + 예약 상태 기계, 실패 시 공급사 예약 취소로 보상, 모호한 타임아웃은 보정 잡 |
+
+### 공통 원칙
+
+- 원본 데이터는 잃지 않는다(캐시·환산·병합은 파생).
+- 표시(근사·지연 허용)와 확정(실시간 원본 재검증)을 분리한다.
+
+### 구현 우선순위(효과 대비 비용)
+
+캐시·정규화 실패 격리(기존 검색 경로에 얹기 쉬움) → 통화(표시 계층) → 중복 병합·예약 대행(새 하위 시스템·오병합/정합 리스크 커 설계 심화 후).
+
+## 36. 개선 — Supplier B의 일시적 resultCode 재시도
+
+지표 확인 중, **B가 error(일시적 장애)를 내도 재시도하지 않는** 점이 드러났습니다. A는 HTTP 5xx/4xx로 일시적/결정적을 구분해 5xx만 재시도하는데, B는 `resultCode != "0000"`을 **구분 없이 전부 비재시도**로 처리하고 있었습니다. Mock의 B error가 `resultCode "E503"(TEMPORARILY_UNAVAILABLE)` 즉 A의 503과 같은 일시 장애라, 같은 상황이 A는 재시도되고 B는 안 되는 불일치였습니다.
+
+### 결정
+
+- B 어댑터에 **일시적 resultCode 집합**(`E503`·`E429` 등 서버측 일시 코드)을 두고, 그 코드는 `retryable=true`로. 나머지 resultCode(잘못된 요청·업무 실패)는 결정적이라 `false` 유지.
+- 상태는 `PROTOCOL_ERROR`(본문으로 실패를 알린 것은 맞음) 그대로 두고, **retryable만 코드별로 판정**(상태·재시도 판정 독립 원칙). 어떤 코드가 일시적인지는 공급사 스펙을 따른다.
+
+### 검증
+
+- 단위(`SupplierBAdapterTest`): `E503` → retryable=true, `E400` → retryable=false
+- e2e: 신규 인스턴스에서 B=E503로 검색 1회 → `resilience4j_retry_calls_total{kind="failed_with_retry"}` +1(B 재시도), A는 `successful_without_retry` +1. 개선 전이면 B는 `failed_without_retry`였음.
+- 문서 정정: [resilience.md](docs/resilience.md)·[failure-handling.md](docs/failure-handling.md)의 "resultCode=비재시도" 서술을 일시적 코드 구분으로 갱신
+- 전체 스위트 59건 통과(기존 58 + 신규 1)
