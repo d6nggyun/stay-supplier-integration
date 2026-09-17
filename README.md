@@ -13,6 +13,7 @@
 | Mock | 별도 모듈, 포트 9090 | 같은 포트를 쓰면 자기 자신을 호출해 스레드가 묶이므로 분리합니다. |
 | 테스트 | JUnit 5 + MockWebServer | 타임아웃·지연 시나리오 재현이 간단합니다. |
 | API 문서 | SpringDoc + Swagger UI | 응답 스키마 자체가 설계 결정이므로 문서로 노출해 호출로 검증합니다. |
+| 견고성 | Resilience4j (Reactor 연산자) | 재시도·서킷 브레이커를 청크 호출 체인에 얹어 전이성 장애를 흡수하고 지속 장애 공급사를 차단합니다. |
 
 ## 모듈 구조
 
@@ -110,7 +111,7 @@ Mock은 별도 모듈로 분리해 애플리케이션이 외부 공급사로 호
 - **타임아웃은 개별 호출과 전체 요청 예산 두 층위**로 둡니다.
 - **부분 실패는 HTTP 200 + 공급사별 상태 객체**로 표현합니다. 쓸 수 있는 결과가 하나도 없으면 5xx(전부 실패 502 / 전부 `SKIPPED` 503)로 응답하되, 본문에 상태를 담아 원인을 전달합니다.
 - 매핑이 없어 호출하지 않은 공급사는 `SKIPPED`로 표기합니다.
-- 재시도·서킷 브레이커는 필수 구현 이후의 확장 사항입니다.
+- **재시도·서킷 브레이커**는 확장으로 구현했습니다. 전이성 실패(타임아웃·연결 실패·5xx)만 재시도하고, 지속 실패 공급사는 서킷을 열어 차단(`CIRCUIT_OPEN`)합니다. (상세 · [docs/resilience.md](docs/resilience.md))
 
 ## API
 
@@ -132,6 +133,7 @@ GET /api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2&childre
 | [docs/supplier-adapter.md](docs/supplier-adapter.md) | 공급사 어댑터 · 실패 판정 통일 · 신규 공급사 |
 | [docs/search-flow.md](docs/search-flow.md) | 통합 검색 흐름 · 병렬 · 청크 · 타임아웃 |
 | [docs/failure-handling.md](docs/failure-handling.md) | 부분 실패 처리 · 공급사별 상태 객체 |
+| [docs/resilience.md](docs/resilience.md) | 재시도 · 서킷 브레이커 |
 | [docs/mock-supplier.md](docs/mock-supplier.md) | Mock 공급사 (정상 · 장애 · 무응답) |
 | [docs/testing.md](docs/testing.md) | 테스트 전략 |
 | [docs/api.md](docs/api.md) | 통합 검색 API 명세 |
@@ -142,5 +144,6 @@ GET /api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2&childre
 ## 구현 범위
 
 - **필수**: 통합 모델, 코드↔식별자 매핑, 공급사 어댑터, 통합 검색 API, 타임아웃·부분 실패·실패 판정 통일, Mock 공급사, 설계 근거 문서
-- **확장**: 재시도, 서킷 브레이커, 캐시, 정규화 실패 격리, 중복 상품 병합, 다중 통화, 예약 대행
+- **확장(구현함)**: 재시도, 서킷 브레이커 ([docs/resilience.md](docs/resilience.md))
+- **확장(향후)**: 캐시, 정규화 실패 격리, 중복 상품 병합, 다중 통화, 예약 대행
 - **범위 밖**: 인증·인가, 결제, 관리자 기능, 프론트엔드, 실제 외부 API 호출, 지역·키워드 검색 필터, 정렬·페이징

@@ -25,6 +25,7 @@ SupplierResult
 SUCCESS
 PARTIAL_SUCCESS
 TIMEOUT
+CIRCUIT_OPEN
 HTTP_ERROR
 PROTOCOL_ERROR
 NO_DATA
@@ -47,14 +48,17 @@ SKIPPED
 | 정상 응답 (결과 0건 포함) | `SUCCESS` (`resultCount`로 건수 구분) |
 | 여러 청크 중 일부만 성공 | `PARTIAL_SUCCESS` |
 | 연결/응답 타임아웃 | `TIMEOUT` |
-| Supplier A의 HTTP 4xx·5xx | `HTTP_ERROR` |
+| Supplier A의 HTTP 4xx·5xx, 연결 실패 | `HTTP_ERROR` |
 | Supplier B의 `resultCode != "0000"` | `PROTOCOL_ERROR` |
 | 응답 역직렬화·형식 오류 | `PROTOCOL_ERROR` |
+| 서킷 브레이커가 열려 차단됨 | `CIRCUIT_OPEN` |
 | 매핑이 없어 호출하지 않음 | `SKIPPED` |
 
 두 공급사는 어댑터 바깥에서 같은 `SupplierIntegrationException`으로 보이므로, 오케스트레이터가 어느 규칙을 적용할지 알 수 있도록 **어댑터가 예외에 실패 종류(`SupplierFailureKind`: `HTTP_ERROR`·`PROTOCOL_ERROR`·`TIMEOUT`)를 실어 보냅니다.** 오케스트레이터는 이 종류를 위 표의 상태로 옮깁니다. (A의 4xx/5xx·B의 실제 HTTP 오류 → `HTTP_ERROR`, B의 `resultCode` 오류·응답 역직렬화·형식 오류 → `PROTOCOL_ERROR`, 연결·읽기 타임아웃 → `TIMEOUT`)
 
-오케스트레이터가 청크 호출에 직접 적용하는 응답 타임아웃과 공급사별 전체 예산도 같은 `TIMEOUT` 상태로 귀결합니다. 한 공급사가 여러 청크로 나뉘고 그중 일부만 실패하면 성공 청크 결과를 유지한 채 `PARTIAL_SUCCESS`로 표기하며, 모든 청크가 실패하면 대표 상태를 우선순위(`TIMEOUT` > `HTTP_ERROR` > `PROTOCOL_ERROR`)로 정합니다.
+오케스트레이터가 청크 호출에 직접 적용하는 응답 타임아웃과 공급사별 전체 예산도 같은 `TIMEOUT` 상태로 귀결합니다. 서킷 브레이커가 열려 호출이 차단되면 `CIRCUIT_OPEN`입니다. 한 공급사가 여러 청크로 나뉘고 그중 일부만 실패하면 성공 청크 결과를 유지한 채 `PARTIAL_SUCCESS`로 표기하며, 모든 청크가 실패하면 대표 상태를 우선순위(`CIRCUIT_OPEN` > `TIMEOUT` > `HTTP_ERROR` > `PROTOCOL_ERROR`)로 정합니다.
+
+전송/HTTP 계층 실패(연결 실패·4xx·5xx)는 상태로는 `HTTP_ERROR`로 묶되, 재시도 여부는 내부적으로 구분합니다(5xx·연결 실패는 재시도, 4xx는 비재시도). 자세한 재시도·서킷 정책은 [resilience.md](resilience.md)를 참고하세요.
 
 `NO_DATA`는 "정상 응답인데 조회 대상 자체가 0건"인 경우에만 한정해 사용하며, 정상 응답에 결과가 비어 있는 일반적인 경우는 `SUCCESS`(`resultCount: 0`)로 둡니다.
 
@@ -118,4 +122,4 @@ SKIPPED
 
 ## 6. 재시도와 서킷 브레이커
 
-재시도와 서킷 브레이커는 필수 구현 이후의 확장 사항으로 둡니다. 초기에는 타임아웃, 병렬 호출, 부분 실패, 실패 코드 판정을 먼저 안정적으로 구현합니다. 도입한다면 5xx·타임아웃만 대상으로 검토합니다.
+재시도와 서킷 브레이커는 필수(타임아웃·병렬·부분 실패·실패 판정)를 안정화한 뒤 확장으로 도입했습니다. 재시도는 전이성 실패(타임아웃·연결 실패·5xx)만 대상으로 하고, 서킷은 공급사별로 둡니다. 상세 설계·설정은 [resilience.md](resilience.md)를 참고하세요.

@@ -992,6 +992,7 @@ README를 실제 구현 상태에 맞춰 확정하고, Swagger 기반 동작 테
 
 1. 코드 리뷰 반영 — 견고성 개선(응답 버퍼)과 청크 상한 정책 정리
 2. 매핑 비활성화(`active`/`last_seen_at`) 제거
+3. 재시도·서킷 브레이커 (확장)
 
 ## 31. 개선 — 응답 버퍼 상한과 청크 상한 정책 (리뷰 반영)
 
@@ -1024,3 +1025,31 @@ behavior는 보존됩니다(오늘 기준 `active`는 항상 true였으므로 `f
 
 - 엔티티·리포지토리·서비스·테스트에서 필드/메서드 제거, `StaySearchService`는 `findAll`로 전환
 - 전체 스위트 53건 통과(활성 조회 단위 테스트 1건 제거, 나머지 그대로)
+
+## 33. 구현 — 재시도 · 서킷 브레이커 (확장)
+
+필수 기능을 안정화한 뒤, 공급사 호출의 일시적 장애 흡수(재시도)와 지속 장애 공급사 차단(서킷)을 확장으로 추가했습니다. 확정 설계는 [docs/resilience.md](docs/resilience.md)에 있습니다.
+
+### 만든 것
+
+- Resilience4j(`reactor`·`retry`·`circuitbreaker`) 의존성, `global.config.ResilienceConfig`(설정값 → `Retry` 1개 공유 + 공급사별 `CircuitBreakerRegistry`)
+- `StaySearchService.callChunk`에 연산자 삽입: `(call+응답 타임아웃) → RetryOperator → CircuitBreakerOperator`, 에러 흡수는 그 뒤
+- `SupplierIntegrationException`에 `retryable` 플래그, 어댑터가 4xx/5xx·연결 실패를 구분해 설정
+- `SupplierSearchStatus.CIRCUIT_OPEN` 추가, `TransportErrorClassifier`(기존 TimeoutClassifier 개명·확장: 타임아웃 + 연결 실패 판정)
+- `supplier.resilience.*` 설정(main·test)
+
+### 구현 결정
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| 적용 방식 | 애노테이션 대신 Reactor 연산자(`transformDeferred`) | 청크·공급사 단위 정밀 제어가 필요해 리액티브 체인에 스테이지로 삽입합니다(AOP 프록시는 경계·인스턴스 선택과 안 맞음). |
+| 연산자 순서 | CB(가장 바깥) → Retry → (call+타임아웃) | CB가 open이면 호출·재시도를 건너뛰고, 재시도는 "call+재시도"의 최종 결과 하나를 CB가 기록하게 합니다. 에러→결과 변환(`onErrorResume`)은 CB·retry가 실제 예외를 보도록 맨 끝에 둡니다. |
+| 재시도 대상 | 타임아웃·연결 실패·5xx만 | 전이성 실패만 재시도합니다. 4xx·`resultCode`·역직렬화는 결정적이라 제외. 상태로는 전송/HTTP 실패를 `HTTP_ERROR`로 묶되 `retryable` 플래그로 구분합니다. |
+| 서킷 단위·표기 | 공급사별 독립 CB, open은 `CIRCUIT_OPEN` | 한 공급사 장애가 다른 공급사에 영향을 주지 않게 하고, "차단되어 호출 안 함"을 응답만으로 드러냅니다. 전부 실패 대표 상태 우선순위: CIRCUIT_OPEN > TIMEOUT > HTTP_ERROR > PROTOCOL_ERROR. |
+| 예산과의 관계 | 재시도는 전체 예산(`.timeout(budget)`) 안에서 수행 | 재시도가 고객 대기를 무한정 늘리지 못하게 예산이 상한 역할을 유지합니다. |
+
+### 검증
+
+- 단위(`StaySearchServiceTest` +2): 전이성 실패 재시도 후 성공(구독 2회로 확인), 비재시도 실패는 재시도 안 함(구독 1회). `TransportErrorClassifierTest`에 연결 실패 판정 추가.
+- 통합 테스트(`@SpringBootTest`)가 `ResilienceConfig` 빈 배선을 포함해 로딩·정상 검색·타임아웃 부분 실패를 그대로 통과.
+- 전체 스위트 56건 통과(기존 53 + 신규 3).
