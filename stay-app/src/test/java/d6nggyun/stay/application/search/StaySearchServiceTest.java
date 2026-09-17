@@ -11,8 +11,11 @@ import d6nggyun.stay.domain.SupplierType;
 import d6nggyun.stay.global.config.SupplierProperties;
 import d6nggyun.stay.global.exception.SupplierFailureKind;
 import d6nggyun.stay.global.exception.SupplierIntegrationException;
+import d6nggyun.stay.infrastructure.persistence.entity.NormalizationFailure;
+import d6nggyun.stay.infrastructure.persistence.entity.NormalizationFailureReason;
 import d6nggyun.stay.infrastructure.persistence.entity.RoomTypeMapping;
 import d6nggyun.stay.infrastructure.persistence.entity.StayMapping;
+import d6nggyun.stay.infrastructure.persistence.repository.NormalizationFailureRepository;
 import d6nggyun.stay.infrastructure.persistence.repository.RoomTypeMappingRepository;
 import d6nggyun.stay.infrastructure.persistence.repository.StayMappingRepository;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -20,6 +23,7 @@ import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDate;
@@ -44,6 +48,8 @@ class StaySearchServiceTest {
             LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 4), 2, 0);
     // JUnit5는 테스트마다 인스턴스를 새로 만들어, 이 레지스트리는 테스트별로 격리된다.
     private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    private final NormalizationFailureRepository normalizationFailureRepository =
+            mock(NormalizationFailureRepository.class);
 
     @Test
     void 두_공급사_결과를_병합하고_공급사_코드를_내부_식별자로_치환한다() {
@@ -293,14 +299,45 @@ class StaySearchServiceTest {
         SupplierProperties properties = new SupplierProperties(null, null, null,
                 searchConfig(3_000, 6_000, 50, 4), null, cacheCfg);
         ChunkResultCache cache = new ChunkResultCache(properties, meterRegistry);
+        NormalizationFailureRecorder recorder =
+                new NormalizationFailureRecorder(normalizationFailureRepository, meterRegistry);
         StaySearchService service = new StaySearchService(List.of(adapterA), stayRepo, roomTypeRepo, properties,
                 Retry.of("test", RetryConfig.custom().maxAttempts(1).build()),
-                CircuitBreakerRegistry.ofDefaults(), meterRegistry, cache);
+                CircuitBreakerRegistry.ofDefaults(), meterRegistry, cache, recorder);
 
         service.search(criteria);
         service.search(criteria);
 
         verify(adapterA, times(1)).search(eq(criteria), eq(List.of("H1")));
+    }
+
+    @Test
+    void 치환할_매핑이_없는_offer는_결과에서_제외하고_격리_기록한다() {
+        SupplierAdapter adapterA = mock(SupplierAdapter.class);
+        when(adapterA.supplier()).thenReturn(SUPPLIER_A);
+        when(adapterA.search(eq(criteria), eq(List.of("H1")))).thenReturn(Mono.just(
+                new SupplierSearchResult(SUPPLIER_A, List.of(offer(SUPPLIER_A, "H1", "Stay A", "R1", "Room A")))));
+
+        // 숙소 매핑은 있지만 객실 타입 매핑이 없어 내부 식별자 치환에 실패한다.
+        StaySearchService service = service(
+                List.of(adapterA),
+                List.of(stayMapping(SUPPLIER_A, "H1", 10L)),
+                List.of());
+
+        SearchResult result = service.search(criteria);
+
+        // 치환 실패 offer는 결과에서 제외되지만(청크 자체는 성공), 격리 레코드로 남는다.
+        assertThat(result.results()).isEmpty();
+        assertThat(result.suppliers().get(0).status()).isEqualTo(SupplierSearchStatus.SUCCESS);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<NormalizationFailure>> captor = ArgumentCaptor.forClass(List.class);
+        verify(normalizationFailureRepository).saveAll(captor.capture());
+        List<NormalizationFailure> saved = captor.getValue();
+        assertThat(saved).hasSize(1);
+        assertThat(saved.get(0).getSupplier()).isEqualTo(SUPPLIER_A);
+        assertThat(saved.get(0).getSupplierStayCode()).isEqualTo("H1");
+        assertThat(saved.get(0).getReason()).isEqualTo(NormalizationFailureReason.MAPPING_NOT_FOUND);
     }
 
     private StaySearchService service(List<SupplierAdapter> adapters,
@@ -327,8 +364,10 @@ class StaySearchServiceTest {
         // 서킷은 기본(닫힘), 캐시는 비활성(cache=null)으로 둔다.
         CircuitBreakerRegistry circuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults();
         ChunkResultCache cache = new ChunkResultCache(properties, meterRegistry);
+        NormalizationFailureRecorder recorder =
+                new NormalizationFailureRecorder(normalizationFailureRepository, meterRegistry);
         return new StaySearchService(adapters, stayRepo, roomTypeRepo, properties, retry,
-                circuitBreakerRegistry, meterRegistry, cache);
+                circuitBreakerRegistry, meterRegistry, cache, recorder);
     }
 
     /** 일시적 실패(타임아웃·retryable 연동 실패)만 재시도하는 Retry. 백오프는 테스트를 위해 최소로 둔다. */

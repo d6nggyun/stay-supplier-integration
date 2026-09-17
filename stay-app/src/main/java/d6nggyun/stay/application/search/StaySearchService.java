@@ -8,6 +8,8 @@ import d6nggyun.stay.domain.SupplierType;
 import d6nggyun.stay.global.config.SupplierProperties;
 import d6nggyun.stay.global.exception.SupplierFailureKind;
 import d6nggyun.stay.global.exception.SupplierIntegrationException;
+import d6nggyun.stay.infrastructure.persistence.entity.NormalizationFailure;
+import d6nggyun.stay.infrastructure.persistence.entity.NormalizationFailureReason;
 import d6nggyun.stay.infrastructure.persistence.entity.RoomTypeMapping;
 import d6nggyun.stay.infrastructure.persistence.entity.StayMapping;
 import d6nggyun.stay.infrastructure.persistence.repository.RoomTypeMappingRepository;
@@ -30,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
@@ -56,6 +59,7 @@ public class StaySearchService {
     private final CircuitBreakerRegistry circuitBreakerRegistry;
     private final MeterRegistry meterRegistry;
     private final ChunkResultCache chunkResultCache;
+    private final NormalizationFailureRecorder normalizationFailureRecorder;
 
     public SearchResult search(SearchCriteria criteria) {
         // 1. 매핑을 일괄 로딩한다. 네트워크 호출 전에 필요한 값을 모두 확보해 조회 트랜잭션을 짧게 유지한다.
@@ -78,6 +82,10 @@ public class StaySearchService {
                         RoomTypeMapping::getInternalRoomTypeId,
                         (existing, ignored) -> existing));
 
+        // 정규화 실패(치환 불가 항목)를 리액티브 구간에서 메모리로 수집한다(병렬이라 스레드 안전 리스트).
+        // DB 저장은 블로킹이라 리액터 스레드에서 하지 않고, 검색 종료 후에 한 번에 기록한다.
+        List<NormalizationFailure> normalizationFailures = new CopyOnWriteArrayList<>();
+
         // 3. 공급사별 호출 파이프라인을 조립한다(아직 실행 전). 매핑 없는 공급사는 호출하지 않고 SKIPPED로 둔다.
         List<Mono<SupplierResult>> calls = adapters.stream()
                 .map(adapter -> {
@@ -85,7 +93,7 @@ public class StaySearchService {
                     if (codes.isEmpty()) {
                         return Mono.just(SupplierResult.skipped(adapter.supplier()));
                     }
-                    return callSupplier(adapter, criteria, codes, stayIdByKey, roomTypeIdByKey);
+                    return callSupplier(adapter, criteria, codes, stayIdByKey, roomTypeIdByKey, normalizationFailures);
                 })
                 .toList();
 
@@ -99,6 +107,8 @@ public class StaySearchService {
                 .toList();
 
         recordMetrics(ordered);
+        // 블로킹 이후(서블릿 스레드)에 격리 레코드를 best-effort로 저장한다.
+        normalizationFailureRecorder.recordAll(normalizationFailures);
         return new SearchResult(ordered);
     }
 
@@ -123,7 +133,8 @@ public class StaySearchService {
      * defer로 구독 시점에 지연 측정을 시작하고, 청크마다 응답 타임아웃을, 공급사 전체에 예산을 적용한다.
      */
     private Mono<SupplierResult> callSupplier(SupplierAdapter adapter, SearchCriteria criteria, List<String> codes,
-                                             Map<StayKey, Long> stayIdByKey, Map<RoomTypeKey, Long> roomTypeIdByKey) {
+                                             Map<StayKey, Long> stayIdByKey, Map<RoomTypeKey, Long> roomTypeIdByKey,
+                                             List<NormalizationFailure> normalizationFailures) {
         SupplierType supplier = adapter.supplier();
         SupplierProperties.Search cfg = properties.search();
         Duration responseTimeout = Duration.ofMillis(cfg.responseTimeoutMs());
@@ -140,7 +151,8 @@ public class StaySearchService {
             return Flux.fromIterable(chunks)
                     .flatMap(chunk -> callChunk(adapter, criteria, chunk, responseTimeout, circuitBreaker), concurrency)
                     .collectList()
-                    .map(outcomes -> aggregate(supplier, outcomes, elapsedMs(start), stayIdByKey, roomTypeIdByKey))
+                    .map(outcomes -> aggregate(supplier, outcomes, elapsedMs(start),
+                            stayIdByKey, roomTypeIdByKey, normalizationFailures))
                     // 전체 예산 초과 시(여러 청크가 순차로 쌓이는 확장 상황) 그 공급사를 TIMEOUT으로 마감한다.
                     .timeout(budget, Mono.fromSupplier(() -> SupplierResult.failure(
                             supplier, SupplierSearchStatus.TIMEOUT, elapsedMs(start),
@@ -172,11 +184,12 @@ public class StaySearchService {
 
     /** 청크 결과들을 공급사 결과로 합친다. 전부 성공/일부 성공/전부 실패를 상태로 구분한다. */
     private SupplierResult aggregate(SupplierType supplier, List<ChunkOutcome> outcomes, long latencyMs,
-                                    Map<StayKey, Long> stayIdByKey, Map<RoomTypeKey, Long> roomTypeIdByKey) {
+                                    Map<StayKey, Long> stayIdByKey, Map<RoomTypeKey, Long> roomTypeIdByKey,
+                                    List<NormalizationFailure> normalizationFailures) {
         List<ChunkOutcome> failed = outcomes.stream().filter(o -> !o.success()).toList();
         List<StayOffer> offers = outcomes.stream()
                 .filter(ChunkOutcome::success)
-                .flatMap(o -> toStayOffers(o.offers(), stayIdByKey, roomTypeIdByKey).stream())
+                .flatMap(o -> toStayOffers(o.offers(), stayIdByKey, roomTypeIdByKey, normalizationFailures).stream())
                 .toList();
 
         if (failed.isEmpty()) {
@@ -196,16 +209,19 @@ public class StaySearchService {
 
     /** 정규화된 공급사 offer의 공급사 코드를 내부 식별자로 치환해 표준 StayOffer를 만든다. */
     private List<StayOffer> toStayOffers(List<SupplierOffer> supplierOffers,
-                                         Map<StayKey, Long> stayIdByKey, Map<RoomTypeKey, Long> roomTypeIdByKey) {
+                                         Map<StayKey, Long> stayIdByKey, Map<RoomTypeKey, Long> roomTypeIdByKey,
+                                         List<NormalizationFailure> normalizationFailures) {
         List<StayOffer> offers = new ArrayList<>();
         for (SupplierOffer offer : supplierOffers) {
             Long internalStayId = stayIdByKey.get(new StayKey(offer.supplier(), offer.supplierStayCode()));
             Long internalRoomTypeId = roomTypeIdByKey.get(
                     new RoomTypeKey(offer.supplier(), offer.supplierStayCode(), offer.supplierRoomTypeCode()));
             if (internalStayId == null || internalRoomTypeId == null) {
-                // 로딩 이후 매핑이 사라지는 등으로 치환할 내부 식별자가 없으면, 코드 노출 대신 방어적으로 제외한다.
+                // 치환할 내부 식별자가 없으면 코드 노출 대신 결과에서 제외하되, 버리지 않고 격리 레코드로 남긴다.
                 log.warn("내부 식별자 매핑이 없어 offer를 제외합니다. supplier={}, stayCode={}, roomTypeCode={}",
                         offer.supplier(), offer.supplierStayCode(), offer.supplierRoomTypeCode());
+                normalizationFailures.add(NormalizationFailure.of(offer.supplier(), offer.supplierStayCode(),
+                        offer.supplierRoomTypeCode(), NormalizationFailureReason.MAPPING_NOT_FOUND, offer.stayName()));
                 continue;
             }
             offers.add(new StayOffer(
