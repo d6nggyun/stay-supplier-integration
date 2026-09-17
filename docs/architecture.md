@@ -25,7 +25,7 @@
 
 ### 확장 범위
 
-재시도 정책, 서킷 브레이커, 캐시 전략, 정규화 실패 격리, 중복 상품 병합, 다중 통화, 예약 대행 흐름은 확장 범위로 분류합니다. 필수 흐름을 안정적으로 완성한 뒤 여력이 있을 때 검토합니다.
+확장 범위는 필수 흐름을 안정화한 뒤 다뤘습니다. 재시도·서킷 브레이커([resilience.md](resilience.md)), 연동 지표·모니터링([observability.md](observability.md)), 요금/재고 캐시([cache.md](cache.md)), 정규화 실패 격리([supplier-adapter.md](supplier-adapter.md) §4)는 구현했고, 중복 상품 병합은 오병합 리스크로 **자동 병합하지 않기로 결정**했습니다([extensions.md](extensions.md) §3). 다중 통화·예약 대행 흐름은 설계 초안으로 남겨 향후 검토합니다.
 
 ## 3. 계층 구조
 
