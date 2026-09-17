@@ -59,6 +59,12 @@ supplier:
       sliding-window-size: 20
       minimum-number-of-calls: 10      # 이 횟수 이상 쌓여야 판정
       wait-duration-in-open-ms: 10000  # open 유지 시간
+  # 요금/재고 캐시. ttl은 표시용 신선도 기준(잠정, 운영에서 튜닝). 예약 확정은 실시간 재검증.
+  cache:
+    enabled: true
+    ttl-ms: 30000        # 표시용 짧은 TTL
+    jitter-ms: 5000      # 동시 만료 분산
+    maximum-size: 10000
 
 # 연동 지표 노출. 최소 엔드포인트만 연다(운영에서는 관리 포트·인증으로 보호).
 management:

@@ -34,6 +34,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -272,6 +273,36 @@ class StaySearchServiceTest {
                 .tags("supplier", "SUPPLIER_B").timer()).isNull();
     }
 
+    @Test
+    void 같은_조건_재검색은_캐시_히트로_공급사를_한_번만_호출한다() {
+        SupplierAdapter adapterA = mock(SupplierAdapter.class);
+        when(adapterA.supplier()).thenReturn(SUPPLIER_A);
+        when(adapterA.search(eq(criteria), eq(List.of("H1")))).thenReturn(Mono.just(
+                new SupplierSearchResult(SUPPLIER_A, List.of(offer(SUPPLIER_A, "H1", "Stay A", "R1", "Room A")))));
+
+        // 매핑 목은 미리 만든 뒤 스텁한다(thenReturn 안에서 다른 목을 스텁하면 Mockito가 혼동).
+        List<StayMapping> stayMappings = List.of(stayMapping(SUPPLIER_A, "H1", 10L));
+        List<RoomTypeMapping> roomTypeMappings = List.of(roomTypeMapping(SUPPLIER_A, "H1", "R1", 100L));
+        StayMappingRepository stayRepo = mock(StayMappingRepository.class);
+        when(stayRepo.findAll()).thenReturn(stayMappings);
+        RoomTypeMappingRepository roomTypeRepo = mock(RoomTypeMappingRepository.class);
+        when(roomTypeRepo.findAll()).thenReturn(roomTypeMappings);
+
+        // 캐시 활성(지터 0, 짧은 TTL). 같은 조건 두 번 검색 → 두 번째는 히트라 공급사 호출이 없어야 한다.
+        SupplierProperties.Cache cacheCfg = new SupplierProperties.Cache(true, 30_000, 0, 100);
+        SupplierProperties properties = new SupplierProperties(null, null, null,
+                searchConfig(3_000, 6_000, 50, 4), null, cacheCfg);
+        ChunkResultCache cache = new ChunkResultCache(properties, meterRegistry);
+        StaySearchService service = new StaySearchService(List.of(adapterA), stayRepo, roomTypeRepo, properties,
+                Retry.of("test", RetryConfig.custom().maxAttempts(1).build()),
+                CircuitBreakerRegistry.ofDefaults(), meterRegistry, cache);
+
+        service.search(criteria);
+        service.search(criteria);
+
+        verify(adapterA, times(1)).search(eq(criteria), eq(List.of("H1")));
+    }
+
     private StaySearchService service(List<SupplierAdapter> adapters,
                                      List<StayMapping> stayMappings, List<RoomTypeMapping> roomTypeMappings) {
         // 기본값: 타임아웃은 넉넉하게(타임아웃 경로를 타지 않도록), 단일 청크(size 50).
@@ -292,11 +323,12 @@ class StaySearchServiceTest {
         when(stayRepo.findAll()).thenReturn(stayMappings);
         RoomTypeMappingRepository roomTypeRepo = mock(RoomTypeMappingRepository.class);
         when(roomTypeRepo.findAll()).thenReturn(roomTypeMappings);
-        SupplierProperties properties = new SupplierProperties(null, null, null, search, null);
-        // 서킷은 기본(닫힘)으로 둔다.
+        SupplierProperties properties = new SupplierProperties(null, null, null, search, null, null);
+        // 서킷은 기본(닫힘), 캐시는 비활성(cache=null)으로 둔다.
         CircuitBreakerRegistry circuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults();
-        return new StaySearchService(
-                adapters, stayRepo, roomTypeRepo, properties, retry, circuitBreakerRegistry, meterRegistry);
+        ChunkResultCache cache = new ChunkResultCache(properties, meterRegistry);
+        return new StaySearchService(adapters, stayRepo, roomTypeRepo, properties, retry,
+                circuitBreakerRegistry, meterRegistry, cache);
     }
 
     /** 일시적 실패(타임아웃·retryable 연동 실패)만 재시도하는 Retry. 백오프는 테스트를 위해 최소로 둔다. */

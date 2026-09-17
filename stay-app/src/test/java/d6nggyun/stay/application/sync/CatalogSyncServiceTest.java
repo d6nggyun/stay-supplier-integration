@@ -37,7 +37,7 @@ class CatalogSyncServiceTest {
 
         MappingUpserter upserter = mock(MappingUpserter.class);
         SupplierProperties properties = new SupplierProperties(
-                null, null, new SupplierProperties.Sync(3_600_000, true), null, null);
+                null, null, new SupplierProperties.Sync(3_600_000, true), null, null, null);
         CatalogSyncService service = new CatalogSyncService(List.of(failingA, okB), upserter, properties);
 
         service.syncAll();

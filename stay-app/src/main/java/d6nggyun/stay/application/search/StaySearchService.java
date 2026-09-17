@@ -55,6 +55,7 @@ public class StaySearchService {
     private final Retry supplierSearchRetry;
     private final CircuitBreakerRegistry circuitBreakerRegistry;
     private final MeterRegistry meterRegistry;
+    private final ChunkResultCache chunkResultCache;
 
     public SearchResult search(SearchCriteria criteria) {
         // 1. 매핑을 일괄 로딩한다. 네트워크 호출 전에 필요한 값을 모두 확보해 조회 트랜잭션을 짧게 유지한다.
@@ -155,10 +156,12 @@ public class StaySearchService {
      */
     private Mono<ChunkOutcome> callChunk(SupplierAdapter adapter, SearchCriteria criteria,
                                         List<String> chunk, Duration responseTimeout, CircuitBreaker circuitBreaker) {
-        return adapter.search(criteria, chunk)
-                .timeout(responseTimeout)
-                .transformDeferred(RetryOperator.of(supplierSearchRetry))
-                .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
+        // 캐시가 가장 바깥: 히트면 타임아웃·재시도·서킷·공급사 호출을 모두 건너뛴다. 성공 결과만 캐시된다.
+        return chunkResultCache.get(adapter.supplier(), criteria, chunk,
+                        () -> adapter.search(criteria, chunk)
+                                .timeout(responseTimeout)
+                                .transformDeferred(RetryOperator.of(supplierSearchRetry))
+                                .transformDeferred(CircuitBreakerOperator.of(circuitBreaker)))
                 .map(result -> ChunkOutcome.success(result.offers()))
                 // 타임아웃은 Reactor 내부 문구 대신 사유를 명확히 담고, 나머지는 예외 메시지를 쓴다.
                 .onErrorResume(ex -> Mono.just(ChunkOutcome.failure(classify(ex),

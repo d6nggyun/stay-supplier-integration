@@ -40,6 +40,13 @@ supplier:
       sliding-window-size: 20
       minimum-number-of-calls: 10
       wait-duration-in-open-ms: 10000
+  # 통합·슬라이스 테스트는 공유 컨텍스트에서 같은 조건 재검색이 캐시로 오염되지 않도록 캐시를 끈다.
+  # 캐시 히트 동작은 단위 테스트(ChunkResultCache 직접 구성)로 검증한다.
+  cache:
+    enabled: false
+    ttl-ms: 30000
+    jitter-ms: 5000
+    maximum-size: 10000
 
 management:
   endpoints:

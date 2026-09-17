@@ -7,7 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * 검색의 타임아웃·청크 파라미터를 설정값으로 둔다.
  */
 @ConfigurationProperties(prefix = "supplier")
-public record SupplierProperties(Endpoint a, Endpoint b, Sync sync, Search search, Resilience resilience) {
+public record SupplierProperties(Endpoint a, Endpoint b, Sync sync, Search search, Resilience resilience, Cache cache) {
 
     public record Endpoint(String baseUrl, String apiKey) {
     }
@@ -40,5 +40,12 @@ public record SupplierProperties(Endpoint a, Endpoint b, Sync sync, Search searc
         public record CircuitBreaker(float failureRateThreshold, int slidingWindowSize,
                                      int minimumNumberOfCalls, long waitDurationInOpenMs) {
         }
+    }
+
+    /**
+     * 요금/재고 캐시 파라미터. ttl은 표시용 신선도 기준(잠정, 운영에서 튜닝),
+     * jitter는 동시 만료 분산용 무작위 오프셋 상한, maximumSize는 엔트리 상한이다.
+     */
+    public record Cache(boolean enabled, long ttlMs, long jitterMs, long maximumSize) {
     }
 }
