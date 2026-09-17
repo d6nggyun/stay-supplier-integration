@@ -1155,3 +1155,27 @@ behavior는 보존됩니다(오늘 기준 `active`는 항상 true였으므로 `f
 - 단위(`StaySearchServiceTest` +1): 같은 조건 재검색 시 공급사 `search`가 1회만 호출(캐시 히트)
 - e2e: 같은 조건 2회 검색 → 2회차 응답 시간 대폭 단축(77ms→10ms), `cache_gets_total{result="hit"}=2`·`miss=2`(공급사 2개=엔트리 2개, 1회차 미스·2회차 히트)
 - 전체 스위트 60건 통과(기존 59 + 신규 1)
+
+## 39. 구현 — 정규화 실패 데이터 격리 (확장)
+
+정규화(치환)할 수 없어 결과에서 제외되던 항목을 **버리지 않고 격리(dead-letter)**하도록 했습니다. 설계는 [supplier-adapter.md](docs/supplier-adapter.md) §4에 반영했습니다.
+
+### 만든 것
+
+- `infrastructure.persistence`: `NormalizationFailure` 엔티티(`normalization_failure` 테이블), `NormalizationFailureReason`(현재 `MAPPING_NOT_FOUND`), 리포지토리
+- `application.search.NormalizationFailureRecorder`: best-effort 일괄 저장(+ 격리 건수 지표)
+- `StaySearchService`: 치환 실패 항목을 리액티브 구간에서 수집 → 검색 종료 후 저장
+
+### 구현 결정
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| 발생 지점 | 코드→내부 식별자 치환 실패(매핑 없음) | 우리 코드의 per-item 정규화 실패는 이 지점. 어댑터 역직렬화 실패는 청크 전체 실패라 별도 |
+| 저장 시점 | 리액티브 구간에선 메모리 수집만, `block()` 이후 일괄 저장 | JPA 쓰기는 블로킹이라 리액터 스레드를 막지 않게 함. 수집 리스트는 병렬이라 스레드 안전(`CopyOnWriteArrayList`) |
+| 실패 격리 | best-effort(저장 실패해도 검색 무영향) | 격리 기록이 검색(부분 성공)을 막지 않게 함 |
+| 알려진 한계 | 캐시 히트마다 반복 기록 가능(드문 방어적 경로), 사유별 dedup은 향후 | 치환 실패가 드물어 영향 작음 |
+
+### 검증
+
+- 단위(`StaySearchServiceTest` +1): 객실 타입 매핑이 없어 치환 실패한 offer는 결과에서 제외되고(청크는 SUCCESS), `saveAll`로 `MAPPING_NOT_FOUND` 격리 레코드 1건 저장 확인
+- 전체 스위트 61건 통과(기존 60 + 신규 1)

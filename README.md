@@ -199,6 +199,6 @@ GET /api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2&childre
 ## 구현 범위
 
 - **필수**: 통합 모델, 코드↔식별자 매핑, 공급사 어댑터, 통합 검색 API, 타임아웃·부분 실패·실패 판정 통일, Mock 공급사, 설계 근거 문서
-- **확장(구현함)**: 재시도·서킷 브레이커 ([docs/resilience.md](docs/resilience.md)), 연동 지표·모니터링 ([docs/observability.md](docs/observability.md)), 요금/재고 캐시 ([docs/cache.md](docs/cache.md))
-- **확장(향후, 설계 초안 있음)**: 정규화 실패 격리, 중복 상품 병합, 다중 통화, 예약 대행 ([docs/extensions.md](docs/extensions.md))
+- **확장(구현함)**: 재시도·서킷 브레이커 ([docs/resilience.md](docs/resilience.md)), 연동 지표·모니터링 ([docs/observability.md](docs/observability.md)), 요금/재고 캐시 ([docs/cache.md](docs/cache.md)), 정규화 실패 격리 ([docs/supplier-adapter.md](docs/supplier-adapter.md))
+- **확장(향후, 설계 초안 있음)**: 중복 상품 병합, 다중 통화, 예약 대행 ([docs/extensions.md](docs/extensions.md))
 - **범위 밖**: 인증·인가, 결제, 관리자 기능, 프론트엔드, 실제 외부 API 호출, 지역·키워드 검색 필터, 정렬·페이징
