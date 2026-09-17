@@ -58,7 +58,7 @@ SKIPPED
 
 오케스트레이터가 청크 호출에 직접 적용하는 응답 타임아웃과 공급사별 전체 예산도 같은 `TIMEOUT` 상태로 귀결합니다. 서킷 브레이커가 열려 호출이 차단되면 `CIRCUIT_OPEN`입니다. 한 공급사가 여러 청크로 나뉘고 그중 일부만 실패하면 성공 청크 결과를 유지한 채 `PARTIAL_SUCCESS`로 표기하며, 모든 청크가 실패하면 대표 상태를 우선순위(`CIRCUIT_OPEN` > `TIMEOUT` > `HTTP_ERROR` > `PROTOCOL_ERROR`)로 정합니다.
 
-전송/HTTP 계층 실패(연결 실패·4xx·5xx)는 상태로는 `HTTP_ERROR`로 묶되, 재시도 여부는 내부적으로 구분합니다(5xx·연결 실패는 재시도, 4xx는 비재시도). 자세한 재시도·서킷 정책은 [resilience.md](resilience.md)를 참고하세요.
+전송/HTTP 계층 실패(연결 실패·4xx·5xx)는 상태로는 `HTTP_ERROR`로 묶되, 재시도 여부는 내부적으로 구분합니다(5xx·연결 실패는 재시도, 4xx는 비재시도). B의 본문 `resultCode` 실패는 상태로는 `PROTOCOL_ERROR`이지만, 그중 일시적 코드(예: `E503`)는 A의 5xx와 같은 일시 장애라 재시도 대상입니다(상태와 재시도 판정은 독립). 자세한 재시도·서킷 정책은 [resilience.md](resilience.md)를 참고하세요.
 
 `NO_DATA`는 "정상 응답인데 조회 대상 자체가 0건"인 경우에만 한정해 사용하며, 정상 응답에 결과가 비어 있는 일반적인 경우는 `SUCCESS`(`resultCount: 0`)로 둡니다.
 

@@ -34,13 +34,14 @@ adapter.search(chunk)
 | 연결 실패(connection refused 등 전송 오류) | O | 순간적 네트워크·기동 지연일 수 있음 |
 | HTTP 5xx | O | 공급사 일시 장애일 수 있음 |
 | HTTP 4xx | X | 요청 자체 문제라 재시도해도 동일 |
-| Supplier B `resultCode` 실패 | X | 결정적 업무 실패 |
+| Supplier B 일시적 `resultCode`(예: `E503`·`E429`) | O | 본문 코드로 표현했을 뿐 A의 5xx와 같은 일시 장애 |
+| Supplier B 그 외 `resultCode`(잘못된 요청·업무 실패) | X | 결정적이라 재시도해도 동일 |
 | 응답 역직렬화·형식 오류 | X | 결정적 |
 
 이를 위해 `SupplierIntegrationException`에 **`retryable` 플래그**를 둡니다(사용자 노출 상태와 무관한 내부 판정용). 어댑터가 실패를 변환할 때 위 표대로 설정합니다.
 
 - 재시도 술어: `TimeoutException 이거나 (SupplierIntegrationException && retryable)`
-- 실패 종류(`SupplierFailureKind`)와 상태 매핑은 유지하되, **전송/HTTP 계층 실패(연결 실패·4xx·5xx)는 `HTTP_ERROR`로 묶고** retryable로 5xx·연결(true) vs 4xx(false)를 구분합니다. 응답을 받았으나 내용이 규약 위반이면 `PROTOCOL_ERROR`(비재시도)입니다.
+- 실패 종류(`SupplierFailureKind`)와 상태 매핑은 유지하되, **전송/HTTP 계층 실패(연결 실패·4xx·5xx)는 `HTTP_ERROR`로 묶고** retryable로 5xx·연결(true) vs 4xx(false)를 구분합니다. 응답을 받았으나 내용이 규약 위반이면 `PROTOCOL_ERROR`이고, 이 안에서도 **일시적 `resultCode`(서버측 일시 장애)는 retryable=true**로 둡니다. 즉 상태(`PROTOCOL_ERROR`)와 재시도 여부는 독립입니다. 어떤 코드가 일시적인지는 공급사 스펙을 따릅니다(어댑터의 재시도 코드 집합).
 
 ## 4. 서킷 브레이커
 

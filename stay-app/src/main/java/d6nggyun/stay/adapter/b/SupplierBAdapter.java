@@ -22,6 +22,7 @@ import reactor.core.publisher.Mono;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -36,6 +37,12 @@ import java.util.stream.Collectors;
 public class SupplierBAdapter implements SupplierAdapter {
 
     private static final String SUCCESS_CODE = "0000";
+    /**
+     * 일시적(재시도 가능) resultCode. B는 실패를 본문 코드로 표현하므로, 서버측 일시 장애 코드(E503 등)는
+     * A의 HTTP 5xx와 동일하게 재시도 대상으로 본다. 그 외 resultCode(잘못된 요청·업무 실패)는 결정적이라 비재시도.
+     * 실제 코드 체계는 공급사 스펙을 따른다.
+     */
+    private static final Set<String> RETRYABLE_RESULT_CODES = Set.of("E503", "E429");
 
     private final WebClient webClient;
 
@@ -133,9 +140,11 @@ public class SupplierBAdapter implements SupplierAdapter {
     }
 
     private SupplierIntegrationException resultCodeError(String resultCode) {
-        // HTTP는 200이지만 본문 규약(resultCode)으로 실패를 알린 경우 → 규약 오류(결정적이라 비재시도).
+        // HTTP는 200이지만 본문 규약(resultCode)으로 실패를 알린 경우 → 상태는 규약 오류.
+        // 다만 일시적 코드(E503 등)는 재시도 대상으로 구분한다(상태·재시도 판정은 독립).
+        boolean retryable = RETRYABLE_RESULT_CODES.contains(resultCode);
         return new SupplierIntegrationException(SupplierType.SUPPLIER_B,
-                SupplierFailureKind.PROTOCOL_ERROR, false, "Supplier B resultCode " + resultCode);
+                SupplierFailureKind.PROTOCOL_ERROR, retryable, "Supplier B resultCode " + resultCode);
     }
 
     private Mono<Throwable> toIntegrationError(ClientResponse response) {

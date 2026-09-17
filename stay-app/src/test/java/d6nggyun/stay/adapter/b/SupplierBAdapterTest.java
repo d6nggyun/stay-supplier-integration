@@ -68,11 +68,24 @@ class SupplierBAdapterTest {
     @Test
     void HTTP_200이어도_resultCode가_0000이_아니면_연동_실패로_변환한다() {
         // B의 핵심: 장애 시에도 HTTP 200을 주고 본문 resultCode로 실패를 알린다.
+        // E503은 일시적 코드라 재시도 대상으로 표시한다(A의 HTTP 5xx와 대칭).
         server.enqueue(jsonResponse(200,
                 "{ \"resultCode\": \"E503\", \"resultMessage\": \"TEMPORARILY_UNAVAILABLE\", \"data\": null }"));
 
         assertThatThrownBy(() -> adapter.search(criteria, List.of("B77120")).block())
-                .isInstanceOf(SupplierIntegrationException.class);
+                .isInstanceOfSatisfying(SupplierIntegrationException.class,
+                        ex -> assertThat(ex.isRetryable()).isTrue());
+    }
+
+    @Test
+    void 일시적이지_않은_resultCode는_재시도_대상이_아니다() {
+        // 잘못된 요청·업무 실패 등 결정적 코드는 재시도해도 동일하므로 비재시도.
+        server.enqueue(jsonResponse(200,
+                "{ \"resultCode\": \"E400\", \"resultMessage\": \"BAD_REQUEST\", \"data\": null }"));
+
+        assertThatThrownBy(() -> adapter.search(criteria, List.of("B77120")).block())
+                .isInstanceOfSatisfying(SupplierIntegrationException.class,
+                        ex -> assertThat(ex.isRetryable()).isFalse());
     }
 
     @Test
