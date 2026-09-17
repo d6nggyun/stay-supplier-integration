@@ -26,7 +26,7 @@ class CatalogSyncServiceTest {
         SupplierAdapter failingA = mock(SupplierAdapter.class);
         when(failingA.supplier()).thenReturn(SUPPLIER_A);
         when(failingA.fetchCatalog()).thenReturn(Mono.error(
-                new SupplierIntegrationException(SUPPLIER_A, SupplierFailureKind.HTTP_ERROR, "boom")));
+                new SupplierIntegrationException(SUPPLIER_A, SupplierFailureKind.HTTP_ERROR, true, "boom")));
 
         SupplierCatalog catalogB = new SupplierCatalog(SUPPLIER_B, List.of(
                 new SupplierCatalog.Stay("B77120", "Riverside Hotel Seoul", List.of(
@@ -37,7 +37,7 @@ class CatalogSyncServiceTest {
 
         MappingUpserter upserter = mock(MappingUpserter.class);
         SupplierProperties properties = new SupplierProperties(
-                null, null, new SupplierProperties.Sync(3_600_000, true), null);
+                null, null, new SupplierProperties.Sync(3_600_000, true), null, null);
         CatalogSyncService service = new CatalogSyncService(List.of(failingA, okB), upserter, properties);
 
         service.syncAll();

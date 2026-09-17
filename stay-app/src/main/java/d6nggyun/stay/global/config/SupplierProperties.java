@@ -7,7 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * 검색의 타임아웃·청크 파라미터를 설정값으로 둔다.
  */
 @ConfigurationProperties(prefix = "supplier")
-public record SupplierProperties(Endpoint a, Endpoint b, Sync sync, Search search) {
+public record SupplierProperties(Endpoint a, Endpoint b, Sync sync, Search search, Resilience resilience) {
 
     public record Endpoint(String baseUrl, String apiKey) {
     }
@@ -25,5 +25,20 @@ public record SupplierProperties(Endpoint a, Endpoint b, Sync sync, Search searc
      */
     public record Search(long connectTimeoutMs, long responseTimeoutMs, long requestBudgetMs,
                          int chunkSize, int chunkConcurrency) {
+    }
+
+    /**
+     * 재시도·서킷 브레이커 파라미터.
+     * 재시도는 전이성 실패(타임아웃·연결 실패·5xx)에만 적용하고, 서킷은 공급사별로 둔다.
+     */
+    public record Resilience(Retry retry, CircuitBreaker circuitBreaker) {
+
+        /** maxAttempts는 최초 호출을 포함한다(3이면 최초 1 + 재시도 2). waitDurationMs는 지수 백오프 기준 간격. */
+        public record Retry(int maxAttempts, long waitDurationMs, double backoffMultiplier) {
+        }
+
+        public record CircuitBreaker(float failureRateThreshold, int slidingWindowSize,
+                                     int minimumNumberOfCalls, long waitDurationInOpenMs) {
+        }
     }
 }

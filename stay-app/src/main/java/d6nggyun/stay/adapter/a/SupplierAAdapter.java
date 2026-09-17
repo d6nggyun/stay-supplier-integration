@@ -1,7 +1,7 @@
 package d6nggyun.stay.adapter.a;
 
 import d6nggyun.stay.adapter.SupplierAdapter;
-import d6nggyun.stay.adapter.TimeoutClassifier;
+import d6nggyun.stay.adapter.TransportErrorClassifier;
 import d6nggyun.stay.adapter.a.dto.AAvailabilityResponse;
 import d6nggyun.stay.adapter.a.dto.AHotelsResponse;
 import d6nggyun.stay.adapter.result.SupplierCatalog;
@@ -118,18 +118,26 @@ public class SupplierAAdapter implements SupplierAdapter {
     }
 
     private Mono<Throwable> toIntegrationError(ClientResponse response) {
+        // 5xx는 일시 장애일 수 있어 재시도 대상, 4xx는 요청 문제라 비재시도. 상태로는 둘 다 HTTP_ERROR.
+        boolean retryable = response.statusCode().is5xxServerError();
         return Mono.error(new SupplierIntegrationException(SupplierType.SUPPLIER_A,
-                SupplierFailureKind.HTTP_ERROR, "Supplier A HTTP " + response.statusCode().value()));
+                SupplierFailureKind.HTTP_ERROR, retryable, "Supplier A HTTP " + response.statusCode().value()));
     }
 
     private Throwable wrapUnlessIntegrationError(Throwable ex) {
         if (ex instanceof SupplierIntegrationException) {
             return ex;
         }
-        // 연결·읽기 타임아웃은 TIMEOUT으로, 그 밖의 디코딩·형식 오류는 규약 오류로 통일한다.
-        SupplierFailureKind kind = TimeoutClassifier.isTimeout(ex)
-                ? SupplierFailureKind.TIMEOUT : SupplierFailureKind.PROTOCOL_ERROR;
+        // 타임아웃·연결 실패는 전이성이라 재시도 대상, 디코딩·형식 오류는 결정적이라 비재시도.
+        if (TransportErrorClassifier.isTimeout(ex)) {
+            return new SupplierIntegrationException(SupplierType.SUPPLIER_A,
+                    SupplierFailureKind.TIMEOUT, true, "Supplier A 연동 실패: " + ex.getMessage(), ex);
+        }
+        if (TransportErrorClassifier.isConnectionFailure(ex)) {
+            return new SupplierIntegrationException(SupplierType.SUPPLIER_A,
+                    SupplierFailureKind.HTTP_ERROR, true, "Supplier A 연결 실패: " + ex.getMessage(), ex);
+        }
         return new SupplierIntegrationException(SupplierType.SUPPLIER_A,
-                kind, "Supplier A 연동 실패: " + ex.getMessage(), ex);
+                SupplierFailureKind.PROTOCOL_ERROR, false, "Supplier A 연동 실패: " + ex.getMessage(), ex);
     }
 }

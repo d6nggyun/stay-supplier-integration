@@ -48,3 +48,14 @@ supplier:
     request-budget-ms: 6000      # 전체 요청 예산(공급사당 상한)
     chunk-size: 50               # 재고·요금 조회 1회 최대 코드 수(규약상 최대 50)
     chunk-concurrency: 4         # 청크 동시 호출 상한
+  # 재시도·서킷 브레이커. 값은 잠정이며 장애·무응답 시나리오로 검증해 튜닝한다.
+  resilience:
+    retry:
+      max-attempts: 3            # 최초 1 + 재시도 2
+      wait-duration-ms: 200      # 지수 백오프 기준 간격
+      backoff-multiplier: 2.0
+    circuit-breaker:
+      failure-rate-threshold: 50       # % 이상이면 open
+      sliding-window-size: 20
+      minimum-number-of-calls: 10      # 이 횟수 이상 쌓여야 판정
+      wait-duration-in-open-ms: 10000  # open 유지 시간

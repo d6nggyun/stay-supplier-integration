@@ -1,7 +1,7 @@
 package d6nggyun.stay.adapter.b;
 
 import d6nggyun.stay.adapter.SupplierAdapter;
-import d6nggyun.stay.adapter.TimeoutClassifier;
+import d6nggyun.stay.adapter.TransportErrorClassifier;
 import d6nggyun.stay.adapter.b.dto.BPropertiesResponse;
 import d6nggyun.stay.adapter.b.dto.BSearchResponse;
 import d6nggyun.stay.adapter.result.SupplierCatalog;
@@ -133,24 +133,32 @@ public class SupplierBAdapter implements SupplierAdapter {
     }
 
     private SupplierIntegrationException resultCodeError(String resultCode) {
-        // HTTP는 200이지만 본문 규약(resultCode)으로 실패를 알린 경우 → 규약 오류.
+        // HTTP는 200이지만 본문 규약(resultCode)으로 실패를 알린 경우 → 규약 오류(결정적이라 비재시도).
         return new SupplierIntegrationException(SupplierType.SUPPLIER_B,
-                SupplierFailureKind.PROTOCOL_ERROR, "Supplier B resultCode " + resultCode);
+                SupplierFailureKind.PROTOCOL_ERROR, false, "Supplier B resultCode " + resultCode);
     }
 
     private Mono<Throwable> toIntegrationError(ClientResponse response) {
+        // 5xx는 재시도 대상, 4xx는 비재시도. 상태로는 둘 다 HTTP_ERROR.
+        boolean retryable = response.statusCode().is5xxServerError();
         return Mono.error(new SupplierIntegrationException(SupplierType.SUPPLIER_B,
-                SupplierFailureKind.HTTP_ERROR, "Supplier B HTTP " + response.statusCode().value()));
+                SupplierFailureKind.HTTP_ERROR, retryable, "Supplier B HTTP " + response.statusCode().value()));
     }
 
     private Throwable wrapUnlessIntegrationError(Throwable ex) {
         if (ex instanceof SupplierIntegrationException) {
             return ex;
         }
-        // 연결·읽기 타임아웃은 TIMEOUT으로, 그 밖의 디코딩·형식 오류는 규약 오류로 통일한다.
-        SupplierFailureKind kind = TimeoutClassifier.isTimeout(ex)
-                ? SupplierFailureKind.TIMEOUT : SupplierFailureKind.PROTOCOL_ERROR;
+        // 타임아웃·연결 실패는 전이성이라 재시도 대상, 디코딩·형식 오류는 결정적이라 비재시도.
+        if (TransportErrorClassifier.isTimeout(ex)) {
+            return new SupplierIntegrationException(SupplierType.SUPPLIER_B,
+                    SupplierFailureKind.TIMEOUT, true, "Supplier B 연동 실패: " + ex.getMessage(), ex);
+        }
+        if (TransportErrorClassifier.isConnectionFailure(ex)) {
+            return new SupplierIntegrationException(SupplierType.SUPPLIER_B,
+                    SupplierFailureKind.HTTP_ERROR, true, "Supplier B 연결 실패: " + ex.getMessage(), ex);
+        }
         return new SupplierIntegrationException(SupplierType.SUPPLIER_B,
-                kind, "Supplier B 연동 실패: " + ex.getMessage(), ex);
+                SupplierFailureKind.PROTOCOL_ERROR, false, "Supplier B 연동 실패: " + ex.getMessage(), ex);
     }
 }

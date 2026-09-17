@@ -15,6 +15,9 @@ public enum SupplierSearchStatus {
     /** 연결·응답 타임아웃. (#9에서 도입) */
     TIMEOUT,
 
+    /** 서킷 브레이커가 열려 호출을 차단함. 지속 실패 공급사에 매달리지 않기 위한 상태다. */
+    CIRCUIT_OPEN,
+
     /** Supplier A의 HTTP 4xx·5xx 등 전송 계층 오류. */
     HTTP_ERROR,
 

@@ -15,6 +15,9 @@ import d6nggyun.stay.infrastructure.persistence.entity.RoomTypeMapping;
 import d6nggyun.stay.infrastructure.persistence.entity.StayMapping;
 import d6nggyun.stay.infrastructure.persistence.repository.RoomTypeMappingRepository;
 import d6nggyun.stay.infrastructure.persistence.repository.StayMappingRepository;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.retry.Retry;
+import io.github.resilience4j.retry.RetryConfig;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 
@@ -103,7 +106,7 @@ class StaySearchServiceTest {
         SupplierAdapter adapterA = mock(SupplierAdapter.class);
         when(adapterA.supplier()).thenReturn(SUPPLIER_A);
         when(adapterA.search(eq(criteria), eq(List.of("H1")))).thenReturn(Mono.error(
-                new SupplierIntegrationException(SUPPLIER_A, SupplierFailureKind.HTTP_ERROR, "Supplier A HTTP 503")));
+                new SupplierIntegrationException(SUPPLIER_A, SupplierFailureKind.HTTP_ERROR, true, "Supplier A HTTP 503")));
 
         SupplierAdapter adapterB = mock(SupplierAdapter.class);
         when(adapterB.supplier()).thenReturn(SUPPLIER_B);
@@ -165,7 +168,7 @@ class StaySearchServiceTest {
                         offer(SUPPLIER_A, "H1", "Stay A1", "R1", "Room A1"),
                         offer(SUPPLIER_A, "H2", "Stay A2", "R2", "Room A2")))));
         when(adapterA.search(eq(criteria), eq(List.of("H3")))).thenReturn(Mono.error(
-                new SupplierIntegrationException(SUPPLIER_A, SupplierFailureKind.HTTP_ERROR, "Supplier A HTTP 503")));
+                new SupplierIntegrationException(SUPPLIER_A, SupplierFailureKind.HTTP_ERROR, true, "Supplier A HTTP 503")));
 
         StaySearchService service = service(
                 List.of(adapterA),
@@ -185,6 +188,58 @@ class StaySearchServiceTest {
                 .containsExactlyInAnyOrder(10L, 11L);
     }
 
+    @Test
+    void 전이성_실패는_재시도해_성공하면_SUCCESS가_된다() {
+        java.util.concurrent.atomic.AtomicInteger subscriptions = new java.util.concurrent.atomic.AtomicInteger();
+        SupplierAdapter adapterA = mock(SupplierAdapter.class);
+        when(adapterA.supplier()).thenReturn(SUPPLIER_A);
+        // 구독마다 다른 결과: 1회차 재시도 가능 실패, 2회차 성공. (retry는 같은 Mono를 재구독한다)
+        when(adapterA.search(eq(criteria), eq(List.of("H1")))).thenReturn(Mono.defer(() ->
+                subscriptions.incrementAndGet() == 1
+                        ? Mono.error(new SupplierIntegrationException(
+                                SUPPLIER_A, SupplierFailureKind.HTTP_ERROR, true, "Supplier A HTTP 503"))
+                        : Mono.just(new SupplierSearchResult(SUPPLIER_A, List.of(
+                                offer(SUPPLIER_A, "H1", "Stay A", "R1", "Room A"))))));
+
+        StaySearchService service = service(
+                List.of(adapterA),
+                List.of(stayMapping(SUPPLIER_A, "H1", 10L)),
+                List.of(roomTypeMapping(SUPPLIER_A, "H1", "R1", 100L)),
+                searchConfig(3_000, 6_000, 50, 4),
+                retryOnRetryable(3));
+
+        SearchResult result = service.search(criteria);
+
+        assertThat(subscriptions.get()).isEqualTo(2); // 최초 1 + 재시도 1
+        assertThat(result.suppliers().get(0).status()).isEqualTo(SupplierSearchStatus.SUCCESS);
+        assertThat(result.results()).extracting(StayOffer::internalStayId).containsExactly(10L);
+    }
+
+    @Test
+    void 비재시도_실패는_재시도하지_않는다() {
+        java.util.concurrent.atomic.AtomicInteger subscriptions = new java.util.concurrent.atomic.AtomicInteger();
+        SupplierAdapter adapterA = mock(SupplierAdapter.class);
+        when(adapterA.supplier()).thenReturn(SUPPLIER_A);
+        // 4xx 등 결정적 실패(retryable=false)는 재시도 대상이 아니다.
+        when(adapterA.search(eq(criteria), eq(List.of("H1")))).thenReturn(Mono.defer(() -> {
+            subscriptions.incrementAndGet();
+            return Mono.error(new SupplierIntegrationException(
+                    SUPPLIER_A, SupplierFailureKind.HTTP_ERROR, false, "Supplier A HTTP 400"));
+        }));
+
+        StaySearchService service = service(
+                List.of(adapterA),
+                List.of(stayMapping(SUPPLIER_A, "H1", 10L)),
+                List.of(roomTypeMapping(SUPPLIER_A, "H1", "R1", 100L)),
+                searchConfig(3_000, 6_000, 50, 4),
+                retryOnRetryable(3));
+
+        SearchResult result = service.search(criteria);
+
+        assertThat(subscriptions.get()).isEqualTo(1); // 재시도 없음
+        assertThat(result.suppliers().get(0).status()).isEqualTo(SupplierSearchStatus.HTTP_ERROR);
+    }
+
     private StaySearchService service(List<SupplierAdapter> adapters,
                                      List<StayMapping> stayMappings, List<RoomTypeMapping> roomTypeMappings) {
         // 기본값: 타임아웃은 넉넉하게(타임아웃 경로를 타지 않도록), 단일 청크(size 50).
@@ -193,12 +248,32 @@ class StaySearchServiceTest {
 
     private StaySearchService service(List<SupplierAdapter> adapters, List<StayMapping> stayMappings,
                                      List<RoomTypeMapping> roomTypeMappings, SupplierProperties.Search search) {
+        // 단위 테스트는 오케스트레이션 로직만 격리하므로 재시도를 끈다(최대 1회).
+        return service(adapters, stayMappings, roomTypeMappings, search,
+                Retry.of("test", RetryConfig.custom().maxAttempts(1).build()));
+    }
+
+    private StaySearchService service(List<SupplierAdapter> adapters, List<StayMapping> stayMappings,
+                                     List<RoomTypeMapping> roomTypeMappings, SupplierProperties.Search search,
+                                     Retry retry) {
         StayMappingRepository stayRepo = mock(StayMappingRepository.class);
         when(stayRepo.findAll()).thenReturn(stayMappings);
         RoomTypeMappingRepository roomTypeRepo = mock(RoomTypeMappingRepository.class);
         when(roomTypeRepo.findAll()).thenReturn(roomTypeMappings);
-        SupplierProperties properties = new SupplierProperties(null, null, null, search);
-        return new StaySearchService(adapters, stayRepo, roomTypeRepo, properties);
+        SupplierProperties properties = new SupplierProperties(null, null, null, search, null);
+        // 서킷은 기본(닫힘)으로 둔다.
+        CircuitBreakerRegistry circuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults();
+        return new StaySearchService(adapters, stayRepo, roomTypeRepo, properties, retry, circuitBreakerRegistry);
+    }
+
+    /** 전이성 실패(타임아웃·retryable 연동 실패)만 재시도하는 Retry. 백오프는 테스트를 위해 최소로 둔다. */
+    private Retry retryOnRetryable(int maxAttempts) {
+        return Retry.of("test", RetryConfig.custom()
+                .maxAttempts(maxAttempts)
+                .waitDuration(java.time.Duration.ofMillis(1))
+                .retryOnException(t -> t instanceof java.util.concurrent.TimeoutException
+                        || (t instanceof SupplierIntegrationException s && s.isRetryable()))
+                .build());
     }
 
     private SupplierProperties.Search searchConfig(long responseMs, long budgetMs, int chunkSize, int concurrency) {

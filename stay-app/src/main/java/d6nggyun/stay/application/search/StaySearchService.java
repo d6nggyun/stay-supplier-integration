@@ -12,6 +12,12 @@ import d6nggyun.stay.infrastructure.persistence.entity.RoomTypeMapping;
 import d6nggyun.stay.infrastructure.persistence.entity.StayMapping;
 import d6nggyun.stay.infrastructure.persistence.repository.RoomTypeMappingRepository;
 import d6nggyun.stay.infrastructure.persistence.repository.StayMappingRepository;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.reactor.circuitbreaker.operator.CircuitBreakerOperator;
+import io.github.resilience4j.reactor.retry.RetryOperator;
+import io.github.resilience4j.retry.Retry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -45,6 +51,8 @@ public class StaySearchService {
     private final StayMappingRepository stayMappingRepository;
     private final RoomTypeMappingRepository roomTypeMappingRepository;
     private final SupplierProperties properties;
+    private final Retry supplierSearchRetry;
+    private final CircuitBreakerRegistry circuitBreakerRegistry;
 
     public SearchResult search(SearchCriteria criteria) {
         // 1. 매핑을 일괄 로딩한다. 네트워크 호출 전에 필요한 값을 모두 확보해 조회 트랜잭션을 짧게 유지한다.
@@ -104,11 +112,13 @@ public class StaySearchService {
         // 코드에 중복으로 박지 않고 설정값과 그 주석으로 명시한다. 여기서는 0/음수만 분할 알고리즘 보호를 위해 막는다.
         List<List<String>> chunks = partition(codes, Math.max(1, cfg.chunkSize()));
         int concurrency = Math.max(1, cfg.chunkConcurrency());
+        // 서킷은 공급사별 독립 인스턴스. 재시도는 공통 정책이라 하나를 공유한다.
+        CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(supplier.name());
 
         return Mono.defer(() -> {
             long start = System.nanoTime();
             return Flux.fromIterable(chunks)
-                    .flatMap(chunk -> callChunk(adapter, criteria, chunk, responseTimeout), concurrency)
+                    .flatMap(chunk -> callChunk(adapter, criteria, chunk, responseTimeout, circuitBreaker), concurrency)
                     .collectList()
                     .map(outcomes -> aggregate(supplier, outcomes, elapsedMs(start), stayIdByKey, roomTypeIdByKey))
                     // 전체 예산 초과 시(여러 청크가 순차로 쌓이는 확장 상황) 그 공급사를 TIMEOUT으로 마감한다.
@@ -119,11 +129,17 @@ public class StaySearchService {
         });
     }
 
-    /** 청크 하나를 호출한다. 응답 타임아웃·연동 실패를 예외로 던지지 않고 청크 결과로 흡수한다. */
+    /**
+     * 청크 하나를 호출한다. 재시도·서킷을 얹은 뒤, 응답 타임아웃·연동 실패를 예외로 던지지 않고 청크 결과로 흡수한다.
+     * 연산자 순서: (call+응답 타임아웃) → 재시도 → 서킷(가장 바깥). 에러를 결과로 바꾸는 onErrorResume은
+     * 재시도·서킷이 실제 예외를 보고 판정하도록 반드시 그 뒤에 둔다.
+     */
     private Mono<ChunkOutcome> callChunk(SupplierAdapter adapter, SearchCriteria criteria,
-                                        List<String> chunk, Duration responseTimeout) {
+                                        List<String> chunk, Duration responseTimeout, CircuitBreaker circuitBreaker) {
         return adapter.search(criteria, chunk)
                 .timeout(responseTimeout)
+                .transformDeferred(RetryOperator.of(supplierSearchRetry))
+                .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
                 .map(result -> ChunkOutcome.success(result.offers()))
                 // 타임아웃은 Reactor 내부 문구 대신 사유를 명확히 담고, 나머지는 예외 메시지를 쓴다.
                 .onErrorResume(ex -> Mono.just(ChunkOutcome.failure(classify(ex),
@@ -185,8 +201,11 @@ public class StaySearchService {
         return offers;
     }
 
-    /** 예외를 공급사별 상태로 통일한다. 타임아웃은 TIMEOUT, 연동 실패는 실패 종류대로 매핑한다. */
+    /** 예외를 공급사별 상태로 통일한다. 서킷 차단은 CIRCUIT_OPEN, 타임아웃은 TIMEOUT, 연동 실패는 실패 종류대로 매핑한다. */
     private SupplierSearchStatus classify(Throwable ex) {
+        if (ex instanceof CallNotPermittedException) {
+            return SupplierSearchStatus.CIRCUIT_OPEN;
+        }
         if (ex instanceof TimeoutException) {
             return SupplierSearchStatus.TIMEOUT;
         }
@@ -204,7 +223,11 @@ public class StaySearchService {
         };
     }
 
+    /** 전부 실패 시 대표 상태. 우선순위: CIRCUIT_OPEN > TIMEOUT > HTTP_ERROR > PROTOCOL_ERROR. */
     private SupplierSearchStatus representativeStatus(List<ChunkOutcome> failed) {
+        if (failed.stream().anyMatch(o -> o.failStatus() == SupplierSearchStatus.CIRCUIT_OPEN)) {
+            return SupplierSearchStatus.CIRCUIT_OPEN;
+        }
         if (failed.stream().anyMatch(o -> o.failStatus() == SupplierSearchStatus.TIMEOUT)) {
             return SupplierSearchStatus.TIMEOUT;
         }

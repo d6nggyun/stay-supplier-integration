@@ -30,3 +30,13 @@ supplier:
     request-budget-ms: 6000
     chunk-size: 50
     chunk-concurrency: 4
+  resilience:
+    retry:
+      max-attempts: 3
+      wait-duration-ms: 200
+      backoff-multiplier: 2.0
+    circuit-breaker:
+      failure-rate-threshold: 50
+      sliding-window-size: 20
+      minimum-number-of-calls: 10
+      wait-duration-in-open-ms: 10000
