@@ -65,6 +65,7 @@
 - 타임아웃은 **개별 호출**(connect·response)과 **전체 요청 예산** 두 층위로 둡니다.
 - 부분 실패는 HTTP 200 + 공급사별 상태 객체로 표현합니다. 쓸 수 있는 결과가 하나도 없으면 5xx(전부 실패 502 / 전부 SKIPPED 503)로 응답하되, 본문에 상태를 담아 원인을 전달합니다.
 - 재시도·서킷 브레이커는 확장으로 구현했습니다. 일시적 실패(타임아웃·연결 실패·5xx)만 재시도하고 서킷은 공급사별로 둡니다. ([docs/resilience.md](docs/resilience.md))
+- 연동 지표는 Micrometer로 계측하고 Actuator(`/actuator/prometheus`)로 노출까지만 합니다. Prometheus 서버·Grafana 등 수집·시각화는 도입하지 않고 확장으로 둡니다. ([docs/observability.md](docs/observability.md))
 
 ### 공급사 실패 표현 (참고)
 - Supplier A: HTTP 4xx/5xx로 실패 표현

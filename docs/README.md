@@ -13,6 +13,7 @@
 | [search-flow.md](search-flow.md) | 통합 검색 흐름 · 병렬 호출 · 청크 분할 · 타임아웃 |
 | [failure-handling.md](failure-handling.md) | 부분 실패 처리 · 공급사별 상태 객체 |
 | [resilience.md](resilience.md) | 재시도 · 서킷 브레이커 |
+| [observability.md](observability.md) | 연동 지표 · 모니터링 |
 | [mock-supplier.md](mock-supplier.md) | Mock 공급사 (정상 · 장애 · 무응답 재현) |
 | [testing.md](testing.md) | 테스트 전략 |
 | [api.md](api.md) | 통합 검색 API 명세 |

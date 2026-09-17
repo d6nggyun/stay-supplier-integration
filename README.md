@@ -76,6 +76,50 @@ Mock은 별도 모듈로 분리해 애플리케이션이 외부 공급사로 호
 
 > H2는 file 모드라 매핑이 재시작 후에도 남습니다. DB 파일은 `:stay-app:bootRun`의 작업 디렉터리 기준이라 **`stay-app/data/stay.mv.db`** 에 생성됩니다(루트가 아님). 매핑 없는 상태(503)를 보려면 **앱을 먼저 종료**하고 `stay-app/data`를 지운 뒤 **Mock 없이 앱만** 기동하세요. 매핑이 남아 있고 Mock이 없으면 공급사 호출이 전부 실패해 `502`가 납니다.
 
+## 지표 확인 (Actuator)
+
+검색을 몇 번 호출해 지표를 쌓은 뒤 Actuator 엔드포인트로 확인합니다. 수집·시각화(Prometheus·Grafana)는 도입하지 않고, 앱은 **긁어갈 수 있게 노출**까지만 합니다. (설계 · [docs/observability.md](docs/observability.md))
+
+**공급사별 지표** — 성공률·타임아웃 비율은 상태별 카운터에서 유도합니다.
+
+```bash
+# 프로메테우스 포맷에서 공급사 지표만
+curl -s localhost:8080/actuator/prometheus | grep supplier_search
+#   supplier_search_calls_total{supplier,status}   호출 수(상태별)
+#   supplier_search_latency_seconds_{count,sum,max}{supplier}   지연
+```
+
+```bash
+# Actuator metrics로 특정 태그 드릴다운
+curl -s "localhost:8080/actuator/metrics/supplier.search.calls?tag=supplier:SUPPLIER_A&tag=status:SUCCESS"
+curl -s "localhost:8080/actuator/metrics/supplier.search.latency?tag=supplier:SUPPLIER_A"
+```
+
+**상태가 쌓이는지** — Mock 모드를 바꿔가며 검색하면 해당 상태 카운터가 늘어납니다.
+
+```bash
+curl -X POST "localhost:9090/control/b/mode?value=no-response"  # 검색 후 status="TIMEOUT" 증가
+curl -X POST "localhost:9090/control/b/mode?value=error"        # status="PROTOCOL_ERROR" 증가
+curl -X POST "localhost:9090/control/b/mode?value=normal"       # 복귀
+```
+
+**재시도·서킷 지표(Resilience4j, 자동 등록)**
+
+```bash
+curl -s localhost:8080/actuator/prometheus | grep resilience4j_retry_calls
+#   kind: successful_without_retry / successful_with_retry / failed_with_retry / failed_without_retry
+curl -s localhost:8080/actuator/prometheus | grep resilience4j_circuitbreaker_state
+#   state: closed / open / half_open (해당 상태가 1.0)
+```
+
+```bash
+# 서킷 open 관찰: B를 error로 두고 minimum-number-of-calls(기본 10) 이상 반복 검색
+curl -X POST "localhost:9090/control/b/mode?value=error"
+for i in $(seq 1 12); do curl -s -o /dev/null "localhost:8080/api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2"; done
+curl -s localhost:8080/actuator/prometheus | grep 'resilience4j_circuitbreaker_state{name="SUPPLIER_B".*open"}'
+# 이후 검색하면 B가 CIRCUIT_OPEN 상태로 응답(호출 차단, latencyMs≈0)
+```
+
 ## 핵심 설계 의사결정
 
 각 결정의 상세 근거는 [docs/](docs/) 문서에 있습니다. 아래는 요약입니다.
@@ -134,6 +178,7 @@ GET /api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2&childre
 | [docs/search-flow.md](docs/search-flow.md) | 통합 검색 흐름 · 병렬 · 청크 · 타임아웃 |
 | [docs/failure-handling.md](docs/failure-handling.md) | 부분 실패 처리 · 공급사별 상태 객체 |
 | [docs/resilience.md](docs/resilience.md) | 재시도 · 서킷 브레이커 |
+| [docs/observability.md](docs/observability.md) | 연동 지표 · 모니터링 |
 | [docs/mock-supplier.md](docs/mock-supplier.md) | Mock 공급사 (정상 · 장애 · 무응답) |
 | [docs/testing.md](docs/testing.md) | 테스트 전략 |
 | [docs/api.md](docs/api.md) | 통합 검색 API 명세 |

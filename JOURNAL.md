@@ -993,6 +993,7 @@ README를 실제 구현 상태에 맞춰 확정하고, Swagger 기반 동작 테
 1. 코드 리뷰 반영 — 견고성 개선(응답 버퍼)과 청크 상한 정책 정리
 2. 매핑 비활성화(`active`/`last_seen_at`) 제거
 3. 재시도·서킷 브레이커 (확장)
+4. 연동 지표·모니터링 (확장)
 
 ## 31. 개선 — 응답 버퍼 상한과 청크 상한 정책 (리뷰 반영)
 
@@ -1053,3 +1054,30 @@ behavior는 보존됩니다(오늘 기준 `active`는 항상 true였으므로 `f
 - 단위(`StaySearchServiceTest` +2): 일시적 실패 재시도 후 성공(구독 2회로 확인), 비재시도 실패는 재시도 안 함(구독 1회). `TransportErrorClassifierTest`에 연결 실패 판정 추가.
 - 통합 테스트(`@SpringBootTest`)가 `ResilienceConfig` 빈 배선을 포함해 로딩·정상 검색·타임아웃 부분 실패를 그대로 통과.
 - 전체 스위트 56건 통과(기존 53 + 신규 3).
+
+## 34. 구현 — 연동 지표·모니터링 (확장)
+
+공급사 연동의 건강도(성공률·응답 지연·타임아웃 비율)를 관측할 수 있게 계측했습니다. 확정 설계는 [docs/observability.md](docs/observability.md)에 있습니다.
+
+### 만든 것
+
+- 의존성: `spring-boot-starter-actuator`, `micrometer-registry-prometheus`, `resilience4j-micrometer`
+- `StaySearchService`가 검색 종료 시 각 `SupplierResult`를 지표로 기록: `supplier.search.calls{supplier,status}`(Counter), `supplier.search.latency{supplier}`(Timer, SKIPPED 제외)
+- `ResilienceConfig`를 레지스트리 기반으로 바꾸고, `TaggedRetryMetrics`·`TaggedCircuitBreakerMetrics`를 MeterBinder 빈으로 등록(서킷·재시도 지표 자동)
+- Actuator 노출 최소화(`health,info,metrics,prometheus`), `/actuator/prometheus`로 스크레이프 포맷 제공
+
+### 구현 결정
+
+| 항목 | 결정 | 근거 |
+| --- | --- | --- |
+| 계측 방식 | Micrometer(벤더 중립 파사드) + Actuator 노출 | 수집 백엔드를 바꿔도 계측 코드는 그대로. 이미 만들던 `SupplierResult`(supplier·status·latencyMs)를 계측 지점으로 재사용합니다. |
+| 파생 지표 | 성공률·타임아웃 비율은 저장 안 하고 상태별 카운터에서 집계 시 유도 | 원자료(카운터)만 남기고 파생은 대시보드에서 계산해 유연성을 둡니다. |
+| 범위 | 앱은 지표 측정·노출까지만, Prometheus 서버·Grafana는 미도입 | 수집·시각화는 운영 인프라 영역이라 저장소 밖으로 두고 방향만 남깁니다. |
+| 부수 수정 | 매핑되지 않은 경로의 `NoResourceFoundException`을 404로 처리 | 전역 핸들러가 프레임워크 404를 500으로 뭉개던 문제를 바로잡았습니다(지표 노출 검증 중 발견). |
+
+### 검증
+
+- 단위(`StaySearchServiceTest` +1): 검색 후 상태별 호출 카운터·지연 타이머 기록, SKIPPED는 타이머 제외
+- 통합(`StaySearchIntegrationTest` +1): `@AutoConfigureObservability`로 메트릭 익스포트를 켜고 `/actuator/prometheus`에 `supplier_search_*` 노출 확인
+- 실기동 확인: `supplier_search_calls_total`·`supplier_search_latency_seconds_*`, `resilience4j_retry_calls_total`·`resilience4j_circuitbreaker_state` 노출
+- 전체 스위트 58건 통과(기존 56 + 신규 2)
