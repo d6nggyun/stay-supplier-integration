@@ -1044,12 +1044,12 @@ behavior는 보존됩니다(오늘 기준 `active`는 항상 true였으므로 `f
 | --- | --- | --- |
 | 적용 방식 | 애노테이션 대신 Reactor 연산자(`transformDeferred`) | 청크·공급사 단위 정밀 제어가 필요해 리액티브 체인에 스테이지로 삽입합니다(AOP 프록시는 경계·인스턴스 선택과 안 맞음). |
 | 연산자 순서 | CB(가장 바깥) → Retry → (call+타임아웃) | CB가 open이면 호출·재시도를 건너뛰고, 재시도는 "call+재시도"의 최종 결과 하나를 CB가 기록하게 합니다. 에러→결과 변환(`onErrorResume`)은 CB·retry가 실제 예외를 보도록 맨 끝에 둡니다. |
-| 재시도 대상 | 타임아웃·연결 실패·5xx만 | 전이성 실패만 재시도합니다. 4xx·`resultCode`·역직렬화는 결정적이라 제외. 상태로는 전송/HTTP 실패를 `HTTP_ERROR`로 묶되 `retryable` 플래그로 구분합니다. |
+| 재시도 대상 | 타임아웃·연결 실패·5xx만 | 일시적 실패만 재시도합니다. 4xx·`resultCode`·역직렬화는 결정적이라 제외. 상태로는 전송/HTTP 실패를 `HTTP_ERROR`로 묶되 `retryable` 플래그로 구분합니다. |
 | 서킷 단위·표기 | 공급사별 독립 CB, open은 `CIRCUIT_OPEN` | 한 공급사 장애가 다른 공급사에 영향을 주지 않게 하고, "차단되어 호출 안 함"을 응답만으로 드러냅니다. 전부 실패 대표 상태 우선순위: CIRCUIT_OPEN > TIMEOUT > HTTP_ERROR > PROTOCOL_ERROR. |
 | 예산과의 관계 | 재시도는 전체 예산(`.timeout(budget)`) 안에서 수행 | 재시도가 고객 대기를 무한정 늘리지 못하게 예산이 상한 역할을 유지합니다. |
 
 ### 검증
 
-- 단위(`StaySearchServiceTest` +2): 전이성 실패 재시도 후 성공(구독 2회로 확인), 비재시도 실패는 재시도 안 함(구독 1회). `TransportErrorClassifierTest`에 연결 실패 판정 추가.
+- 단위(`StaySearchServiceTest` +2): 일시적 실패 재시도 후 성공(구독 2회로 확인), 비재시도 실패는 재시도 안 함(구독 1회). `TransportErrorClassifierTest`에 연결 실패 판정 추가.
 - 통합 테스트(`@SpringBootTest`)가 `ResilienceConfig` 빈 배선을 포함해 로딩·정상 검색·타임아웃 부분 실패를 그대로 통과.
 - 전체 스위트 56건 통과(기존 53 + 신규 3).

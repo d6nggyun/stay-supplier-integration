@@ -128,7 +128,7 @@ public class SupplierAAdapter implements SupplierAdapter {
         if (ex instanceof SupplierIntegrationException) {
             return ex;
         }
-        // 타임아웃·연결 실패는 전이성이라 재시도 대상, 디코딩·형식 오류는 결정적이라 비재시도.
+        // 타임아웃·연결 실패는 일시적이라 재시도 대상, 디코딩·형식 오류는 결정적이라 비재시도.
         if (TransportErrorClassifier.isTimeout(ex)) {
             return new SupplierIntegrationException(SupplierType.SUPPLIER_A,
                     SupplierFailureKind.TIMEOUT, true, "Supplier A 연동 실패: " + ex.getMessage(), ex);

@@ -29,7 +29,7 @@ public record SupplierProperties(Endpoint a, Endpoint b, Sync sync, Search searc
 
     /**
      * 재시도·서킷 브레이커 파라미터.
-     * 재시도는 전이성 실패(타임아웃·연결 실패·5xx)에만 적용하고, 서킷은 공급사별로 둔다.
+     * 재시도는 일시적 실패(타임아웃·연결 실패·5xx)에만 적용하고, 서킷은 공급사별로 둔다.
      */
     public record Resilience(Retry retry, CircuitBreaker circuitBreaker) {
 

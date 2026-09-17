@@ -64,7 +64,7 @@
 - Supplier B의 HTTP 200 실패 응답(`resultCode != "0000"`)은 어댑터에서 실패로 변환하며, Supplier A의 4xx/5xx와 동일한 연동 실패로 취급합니다.
 - 타임아웃은 **개별 호출**(connect·response)과 **전체 요청 예산** 두 층위로 둡니다.
 - 부분 실패는 HTTP 200 + 공급사별 상태 객체로 표현합니다. 쓸 수 있는 결과가 하나도 없으면 5xx(전부 실패 502 / 전부 SKIPPED 503)로 응답하되, 본문에 상태를 담아 원인을 전달합니다.
-- 재시도·서킷 브레이커는 확장으로 구현했습니다. 전이성 실패(타임아웃·연결 실패·5xx)만 재시도하고 서킷은 공급사별로 둡니다. ([docs/resilience.md](docs/resilience.md))
+- 재시도·서킷 브레이커는 확장으로 구현했습니다. 일시적 실패(타임아웃·연결 실패·5xx)만 재시도하고 서킷은 공급사별로 둡니다. ([docs/resilience.md](docs/resilience.md))
 
 ### 공급사 실패 표현 (참고)
 - Supplier A: HTTP 4xx/5xx로 실패 표현

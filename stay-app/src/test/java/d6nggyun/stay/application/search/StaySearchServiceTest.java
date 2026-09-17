@@ -189,7 +189,7 @@ class StaySearchServiceTest {
     }
 
     @Test
-    void 전이성_실패는_재시도해_성공하면_SUCCESS가_된다() {
+    void 일시적_실패는_재시도해_성공하면_SUCCESS가_된다() {
         java.util.concurrent.atomic.AtomicInteger subscriptions = new java.util.concurrent.atomic.AtomicInteger();
         SupplierAdapter adapterA = mock(SupplierAdapter.class);
         when(adapterA.supplier()).thenReturn(SUPPLIER_A);
@@ -266,7 +266,7 @@ class StaySearchServiceTest {
         return new StaySearchService(adapters, stayRepo, roomTypeRepo, properties, retry, circuitBreakerRegistry);
     }
 
-    /** 전이성 실패(타임아웃·retryable 연동 실패)만 재시도하는 Retry. 백오프는 테스트를 위해 최소로 둔다. */
+    /** 일시적 실패(타임아웃·retryable 연동 실패)만 재시도하는 Retry. 백오프는 테스트를 위해 최소로 둔다. */
     private Retry retryOnRetryable(int maxAttempts) {
         return Retry.of("test", RetryConfig.custom()
                 .maxAttempts(maxAttempts)

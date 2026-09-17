@@ -1,6 +1,6 @@
 # 재시도 · 서킷 브레이커
 
-공급사 호출의 일시적 장애를 흡수하고(재시도), 지속 장애 공급사에는 매달리지 않도록(서킷 브레이커) 합니다. 필수 기능(타임아웃·부분 실패) 위에 얹는 확장이며, 방침은 "전이성(transient) 실패만 재시도, 서킷은 공급사별"입니다.
+공급사 호출의 일시적 장애를 흡수하고(재시도), 지속 장애 공급사에는 매달리지 않도록(서킷 브레이커) 합니다. 필수 기능(타임아웃·부분 실패) 위에 얹는 확장이며, 방침은 "일시적(transient) 실패만 재시도, 서킷은 공급사별"입니다.
 
 ## 1. 라이브러리·적용 방식
 
@@ -16,7 +16,7 @@ Resilience4j를 **프로그래밍 방식(Reactor 연산자)**으로 적용합니
 ```
 adapter.search(chunk)
   .timeout(responseTimeout)               // ① 시도 1회당 응답 타임아웃
-  .transformDeferred(RetryOperator)       // ② 전이성 실패면 백오프 후 재시도(call+timeout 통째)
+  .transformDeferred(RetryOperator)       // ② 일시적 실패면 백오프 후 재시도(call+timeout 통째)
   .transformDeferred(CircuitBreakerOperator) // ③ 공급사 CB: open이면 즉시 차단
   .map(ChunkOutcome::success)
   .onErrorResume(ex -> ChunkOutcome.failure(classify(ex), ...))  // 에러를 상태로 흡수(맨 끝)
@@ -26,7 +26,7 @@ adapter.search(chunk)
 - **순서 근거**: CB가 가장 바깥이라 open이면 호출·재시도 자체를 건너뜁니다. 재시도는 CB 안쪽이라, "call+재시도"의 최종 결과 하나를 CB가 성공/실패로 기록합니다. 즉 일시적 blip은 재시도가 흡수하고, 그걸 거쳐도 지속 실패면 CB가 엽니다.
 - 공급사 전체는 기존 `.timeout(budget)`으로 감싸, 재시도가 전체 예산을 넘지 못하게 상한을 유지합니다.
 
-## 3. 재시도 대상 (전이성 실패만)
+## 3. 재시도 대상 (일시적 실패만)
 
 | 실패 | 재시도 | 이유 |
 | --- | --- | --- |

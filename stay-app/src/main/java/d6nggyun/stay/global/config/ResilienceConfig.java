@@ -31,7 +31,7 @@ public class ResilienceConfig {
                 .maxAttempts(cfg.maxAttempts())
                 .intervalFunction(IntervalFunction.ofExponentialBackoff(
                         Duration.ofMillis(cfg.waitDurationMs()), cfg.backoffMultiplier()))
-                // 전이성 실패만 재시도: 타임아웃, 또는 재시도 가능으로 표시된 연동 실패(5xx·연결 실패).
+                // 일시적 실패만 재시도: 타임아웃, 또는 재시도 가능으로 표시된 연동 실패(5xx·연결 실패).
                 .retryOnException(this::isRetryable)
                 .build();
         return Retry.of("supplierSearch", config);
