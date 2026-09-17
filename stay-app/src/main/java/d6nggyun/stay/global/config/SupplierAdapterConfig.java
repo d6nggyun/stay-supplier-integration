@@ -20,6 +20,12 @@ import reactor.netty.http.client.HttpClient;
 @RequiredArgsConstructor
 public class SupplierAdapterConfig {
 
+    /**
+     * 응답 본문을 메모리로 버퍼링하는 상한. 기본값(256KB)은 청크(최대 50개 숙소)의 재고·요금 응답이 커지면
+     * 초과해 디코딩이 실패할 수 있어, 여유를 둬 4MB로 상향한다.
+     */
+    private static final int MAX_RESPONSE_IN_MEMORY_BYTES = 4 * 1024 * 1024;
+
     private final SupplierProperties properties;
 
     @Bean
@@ -45,6 +51,8 @@ public class SupplierAdapterConfig {
                 .baseUrl(endpoint.baseUrl())
                 .defaultHeader("X-Api-Key", endpoint.apiKey())
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
+                // 응답 버퍼 상한을 기본 256KB에서 상향해, 청크 응답이 커져도 디코딩이 끊기지 않게 한다.
+                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(MAX_RESPONSE_IN_MEMORY_BYTES))
                 .build();
     }
 }
