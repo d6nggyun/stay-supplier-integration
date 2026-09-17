@@ -14,6 +14,7 @@
 | [failure-handling.md](failure-handling.md) | 부분 실패 처리 · 공급사별 상태 객체 |
 | [resilience.md](resilience.md) | 재시도 · 서킷 브레이커 |
 | [observability.md](observability.md) | 연동 지표 · 모니터링 |
+| [extensions.md](extensions.md) | 확장 설계 초안 (캐시 · 정규화 실패 격리 · 중복 병합 · 통화 · 예약 대행) |
 | [mock-supplier.md](mock-supplier.md) | Mock 공급사 (정상 · 장애 · 무응답 재현) |
 | [testing.md](testing.md) | 테스트 전략 |
 | [api.md](api.md) | 통합 검색 API 명세 |

@@ -179,6 +179,7 @@ GET /api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2&childre
 | [docs/failure-handling.md](docs/failure-handling.md) | 부분 실패 처리 · 공급사별 상태 객체 |
 | [docs/resilience.md](docs/resilience.md) | 재시도 · 서킷 브레이커 |
 | [docs/observability.md](docs/observability.md) | 연동 지표 · 모니터링 |
+| [docs/extensions.md](docs/extensions.md) | 확장 설계 초안 (캐시 · 정규화 실패 격리 · 중복 병합 · 통화 · 예약 대행) |
 | [docs/mock-supplier.md](docs/mock-supplier.md) | Mock 공급사 (정상 · 장애 · 무응답) |
 | [docs/testing.md](docs/testing.md) | 테스트 전략 |
 | [docs/api.md](docs/api.md) | 통합 검색 API 명세 |
@@ -190,5 +191,5 @@ GET /api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2&childre
 
 - **필수**: 통합 모델, 코드↔식별자 매핑, 공급사 어댑터, 통합 검색 API, 타임아웃·부분 실패·실패 판정 통일, Mock 공급사, 설계 근거 문서
 - **확장(구현함)**: 재시도, 서킷 브레이커 ([docs/resilience.md](docs/resilience.md))
-- **확장(향후)**: 캐시, 정규화 실패 격리, 중복 상품 병합, 다중 통화, 예약 대행
+- **확장(향후, 설계 초안 있음)**: 캐시, 정규화 실패 격리, 중복 상품 병합, 다중 통화, 예약 대행 ([docs/extensions.md](docs/extensions.md))
 - **범위 밖**: 인증·인가, 결제, 관리자 기능, 프론트엔드, 실제 외부 API 호출, 지역·키워드 검색 필터, 정렬·페이징
